@@ -1,0 +1,269 @@
+```javascript
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+} from '@whiskeysockets/baileys'
+import { Boom } from '@hapi/boom'
+import pino from 'pino'
+import readline from 'readline'
+
+import { checkMLProfile, formatMLProfile } from './ml-profile.js'
+import { handleSosmed } from './handler-sosmed.js'
+import { handleDownload } from './handler-download.js'
+import { menuText } from './menu.js'
+import { handleSearch } from './handler-search.js'
+import { handleMenfess } from './handler-menfess.js'
+import { handleCrypto } from './handler-crypto.js'
+import { handleWeather } from './handler-weather.js' // <-- NEW IMPORT: Pastikan Anda membuat file handler-weather.js
+import { createRequire } from 'module'
+
+const require = createRequire(import.meta.url)
+const fileManager = require('./file-manager.cjs')
+const aiUpdate = require('./handler-ai-update.cjs')
+const botConfig = require('./config.cjs') // <-- Pastikan Anda menambahkan OPENWEATHER_API_KEY di config.cjs
+process.on('uncaughtException', err => {
+  console.error('⚠️ Error:', err.message)
+})
+process.on('unhandledRejection', err => {
+  console.error('⚠️ Rejection:', err?.message)
+})
+
+const PREFIX = '.'
+let isReconnecting = false 
+const OWNER = '62895618805248'
+const logger = pino({ level: 'silent' })
+
+function tanya(pertanyaan) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  return new Promise(resolve => rl.question(pertanyaan, ans => { rl.close(); resolve(ans.trim()) }))
+}
+
+async function startBot() {
+  const { state, saveCreds } = await useMultiFileAuthState('./auth')
+  const { version } = await fetchLatestBaileysVersion()
+
+  const sock = makeWASocket({
+    version,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger),
+    },
+    logger,
+    printQRInTerminal: false,
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
+    connectTimeoutMs: 60000,
+    keepAliveIntervalMs: 30000,
+    markOnlineOnConnect: false,
+  })
+
+  sock.ev.on('creds.update', saveCreds)
+
+  if (!sock.authState.creds.registered) {
+    let nomor = await tanya('📱 Masukkan nomor WA kamu (contoh: 628123456789): ')
+    nomor = nomor.replace(/[^0-9]/g, '')
+    if (nomor.startsWith('0')) nomor = '62' + nomor.slice(1)
+
+    console.log(`\n✅ Nomor: ${nomor}`)
+    console.log('⏳ Meminta kode pairing...\n')
+    await new Promise(r => setTimeout(r, 3000))
+
+    try {
+      const code = await sock.requestPairingCode(nomor)
+      console.log(`\n╔══════════════════════════╗`)
+      console.log(`║  🔑 KODE PAIRING: ${code}  ║`)
+      console.log(`╚══════════════════════════╝`)
+      console.log('\n1. Buka WhatsApp')
+      console.log('2. Titik 3 → Perangkat Tertaut')
+      console.log('3. Tautkan dengan Nomor Telepon')
+      console.log('4. Masukkan kode di atas\n')
+    } catch (e) {
+     console.log('❌ Gagal minta kode:', e.message)
+    }
+  }
+
+  sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+  if (connection === 'close') {
+    const code = new Boom(lastDisconnect?.error)?.output?.statusCode
+    if (code === DisconnectReason.loggedOut) {
+      console.log('🚫 Logout! Hapus folder auth/ lalu jalankan ulang.')
+      process.exit(1)
+    } else if (!isReconnecting) {       // ← cegah double reconnect
+      isReconnecting = true
+      console.log('🔄 Reconnect dalam 5 detik...')
+      setTimeout(() => {
+        isReconnecting = false
+        startBot()
+      }, 5000)
+    }
+    } else if (connection === 'open') {
+      console.clear()
+      console.log('╔════════════════════════════════╗')
+      console.log('║   ✅ BOT BERHASIL TERHUBUNG!   ║')
+      console.log('╚════════════════════════════════╝')
+      console.log(`\n📱 Nomor : ${sock.user?.id?.split(':')[0]}`)
+      console.log(`📛 Nama  : ${sock.user?.name}`)
+      console.log('\n🤖 Bot siap!\n')
+    }
+  })
+
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return
+    const msg = messages[0]
+    if (!msg?.message || msg.key.fromMe) return
+
+    const from = msg.key.remoteJid
+    const isGroup = from.endsWith('@g.us')
+    const sender = isGroup ? msg.key.participant : from
+
+    const body =
+      msg.message.conversation ||
+      msg.message.extendedTextMessage?.text ||
+      msg.message.imageMessage?.caption ||
+      msg.message.videoMessage?.caption || ''
+
+const fmHandled = await fileManager.handle(sock, msg)
+    const aiHandled = await aiUpdate.handle(sock, msg, botConfig.GEMINI_KEY)
+    if (aiHandled) return
+if (fmHandled) return
+
+    if (!body.startsWith(PREFIX)) return
+
+    const args = body.slice(PREFIX.length).trim().split(/\s+/)
+    const command = args[0]?.toLowerCase()
+    const text = args.slice(1).join(' ')
+
+    const sendText = async (t) => sock.sendMessage(from, { text: t }, { quoted: msg })
+
+    console.log(`📩 [${isGroup ? 'Group' : 'Private'}] ${sender.split('@')[0]}: ${body}`)
+
+    try {
+      switch (command) {
+
+// ======= SEARCH DUCKDUCKGO =======
+case 'search':
+case 'ddg':
+  await handleSearch(sock, msg, text, command)
+  break
+
+case 'searchhelp':
+  await sendText(`... teks bantuan ...`)
+  break
+        case 'menu':
+        case 'help':
+case 'help':
+await sendText(menuText)
+break
+
+        case 'ping': {
+          const start = Date.now()
+          await sendText(`🏓 *Pong!*\n⚡ Respon: ${Date.now() - start}ms`)
+          break
+        }
+
+        case 'info':
+          await sendText(
+            `╔══════════════════════╗\n` +
+            `║     🤖 INFO BOT       ║\n` +
+            `╚══════════════════════╝\n\n` +
+            `📌 *Prefix :* ${PREFIX}\n` +
+            `👤 *Owner  :* wa.me/${OWNER}\n` +
+            `⚙️ *Library:* Baileys\n` +
+            `🟢 *Status :* Online`
+          )
+          break
+
+        case 'owner':
+          await sendText(`👤 *Owner Bot*\nwa.me/${OWNER}`)
+          break
+
+        // ======= MOBILE LEGENDS =======
+        case 'ml': {
+          const parts = text.replace(/[()]/g, '').trim().split(/\s+/)
+          const userId = parts[0]
+          const zoneId = parts[1]
+          if (!userId || !zoneId) {
+            return sendText(
+              `❌ Format salah!\n\n` +
+              `Cara pakai: *${PREFIX}ml [ID] [Zone]*\n` +
+              `Contoh: *${PREFIX}ml 123456789 2107*\n\n` +
+              `Ketik *${PREFIX}mlhelp* untuk panduan`
+            )
+          }
+          await sendText('⏳ Sedang mengecek profil ML...')
+          try {
+            const data = await checkMLProfile(userId, zoneId)
+            await sendText(formatMLProfile(data))
+          } catch (err) {
+            await sendText(`❌ ${err.message}`)
+          }
+          break
+        }
+
+        case 'mlhelp':
+          await sendText(
+            `📖 *Cara Cari ID dan Zone ML*\n\n` +
+            `1. Buka Mobile Legends\n` +
+            `2. Tap foto profil\n` +
+            `3. Lihat angka di bawah nama\n\n` +
+            `Format: *123456789 (2107)*\n` +
+            `• 123456789 = ID\n` +
+            `• 2107 = Zone\n\n` +
+            `Contoh: *${PREFIX}ml 123456789 2107*`
+          )
+          break
+
+        // ======= SOSMED PROFILE =======
+        // .ig = cek profil Instagram
+        // .tt = cek profil TikTok
+        // .gh = cek profil GitHub
+        // .roblox = cek profil Roblox
+        // .yt = cek channel YouTube
+        case 'ig':
+        case 'tt':
+        case 'gh':
+        case 'roblox':
+        case 'yt':
+          await handleSosmed(sock, msg, text, command)
+          break
+
+        // ======= DOWNLOAD =======
+        // .ytdl = download video YouTube
+        // .ytmp3 = download audio YouTube
+        // .ttdl = download video TikTok
+        case 'ytdl':
+        case 'ytmp3':
+        case 'ttdl':
+          await handleDownload(sock, msg, text, command)
+          break
+
+        case 'menfess':
+          await handleMenfess(sock, msg, text, command)
+          break
+
+case 'crypto':
+  await handleCrypto(sock, msg, text, command)
+  break
+
+        // ======= WEATHER =======
+        case 'cuaca': // <-- NEW CASE
+          await handleWeather(sock, msg, text, botConfig.OPENWEATHER_API_KEY)
+          break
+
+        case 'teks':
+          if (!text) return sendText(`❌ Contoh: ${PREFIX}teks Halo Dunia`)
+          await sendText(text)
+          break
+
+        default:
+          await sendText(`❌ Command *${command}* tidak dikenal.\nKetik *${PREFIX}menu* untuk daftar command.`)
+      }
+    } catch (err) {
+      console.error('Error:', err)
+      await sendText(`❌ Error: ${err.message}`)
+    }
+  })
+}
+
+console.
