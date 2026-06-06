@@ -44,12 +44,6 @@ Bot WhatsApp dengan berbagai fitur, dibuat menggunakan [@whiskeysockets/baileys]
 | `.berita [topik]` | Cari berita terkini |
 | `.gambar [query]` | Cari gambar |
 
-### 🛒 Market *(Baru!)*
-| Command | Fungsi |
-|---------|--------|
-| `.tokped [produk]` | Cari produk di Tokopedia |
-| `.shopee [produk]` | Cari produk di Shopee |
-| `.harga [barang]` | Cek harga pasaran barang |
 
 ### 💰 Crypto *(Baru!)*
 | Command | Fungsi |
