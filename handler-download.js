@@ -6,7 +6,7 @@ import { promisify } from 'util'
 
 const execAsync = promisify(exec)
 const TIMEOUT = 30000
-const TMP_DIR = '/sdcard/wa-tmp'
+const TMP_DIR = '/tmp/wa-tmp'
 const MAX_DURATION = 6600
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR)
 
