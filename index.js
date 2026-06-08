@@ -8,6 +8,7 @@ import { Boom } from '@hapi/boom'
 import pino from 'pino'
 import readline from 'readline'
 import { createRequire } from 'module'
+import fs from 'fs'
 
 import 'dotenv/config'
 import { checkMLProfile, formatMLProfile } from './ml-profile.js'
@@ -35,9 +36,10 @@ import {
   handleGame,
 } from './handler-game.js'
 import { handleCekML, handleMLAcc, handleMLZone, handleMLMenu } from './handler-ml-cek.js'
-import { execute as imagineExec, handleAutoImagine } from './handler-imagine.js'
+import { execute as imagineExec, handleImagine, handleAutoImagine } from "./handler-imagine.js"
 import { handleWeather } from './handler-weather.js'
 import { handleUpdate, handleRestart } from './handler-update.js'
+import { handleMessage } from "./handler.js"
 
 const require = createRequire(import.meta.url)
 const fileManager = require('./file-manager.cjs')
@@ -126,7 +128,48 @@ async function startBot() {
     }
   })
 
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+  
+// ─── BANNED LIST ─────────────────────────────────────────────
+const BANNED_FILE = process.env.HOME + '/wa-bot/banned.json';
+function loadBanned() {
+  try { return JSON.parse(fs.readFileSync(BANNED_FILE, 'utf8')); } catch { return []; }
+}
+function saveBanned(list) {
+  fs.writeFileSync(BANNED_FILE, JSON.stringify(list, null, 2));
+}
+// ─── USER LIST ─────────────────────────────────────────────
+const USERS_FILE = process.env.HOME + '/wa-bot/users.json';
+function loadUsers() {
+  try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch { return {}; }
+}
+function saveUser(lid, nomor) {
+  const users = loadUsers();
+  const clean = lid.replace(/@(lid|s\.whatsapp\.net)$/, '');
+  if (!users[clean]) {
+    users[clean] = { lid: clean, nomor: nomor || '', firstSeen: new Date().toISOString() };
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  }
+}
+function findLidByNomor(nomor) {
+  const users = loadUsers();
+  const cleanNomor = nomor.replace(/[^0-9]/g, '');
+  const found = Object.values(users).find(u => u.nomor && u.nomor.replace(/[^0-9]/g, '') === cleanNomor);
+  return found ? found.lid : null;
+}
+
+function isOwner(nomor) {
+  const ownerLids = ['110857451221063', '83807763972304'];
+  const clean = nomor.replace(/@(lid|s\.whatsapp\.net)$/, '');
+  return ownerLids.includes(clean);
+}
+
+function isBanned(nomor) {
+  // Support both @lid and @s.whatsapp.net format
+  const num = nomor.replace(/@(lid|s\.whatsapp\.net)$/, "").replace(/[^0-9]/g, "");
+  return loadBanned().some(b => b.replace(/@(lid|s\.whatsapp\.net)$/, "") === num);
+}
+
+sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return
     const msg = messages[0]
     if (!msg?.message || msg.key.fromMe) return
@@ -134,6 +177,16 @@ async function startBot() {
     const from = msg.key.remoteJid
     const isGroup = from.endsWith('@g.us')
     const sender = isGroup ? msg.key.participant : from
+
+    console.log('[USER LID]', sender);
+    // Catat user
+    const senderNomor = sender ? sender.replace(/@(lid|s\.whatsapp\.net)$/, '') : '';
+    saveUser(sender, senderNomor);
+
+    // Catat user
+
+    // Cek banned
+    if (sender && !isOwner(sender) && isBanned(sender)) { console.log('[BANNED] Blocked:', sender); return; }
 
     const body =
       msg.message.conversation ||
@@ -293,8 +346,8 @@ async function startBot() {
             `│ 🟢 *Status  :* Online          │\n` +
             `│ 📦 *Versi   :* 2.1.0           │\n` +
             `╰────────────────────────╯\n\n` +
-            `_Powered by YANZYAHA-BOT_ ⚡`
-            `_Powered by CLAUDE AI FT GROQ AI_ ⚡`
+            `_Powered by YANZYAHA-BOT_ ⚡` +
+            `_SUPPORT by CLAUDE AI FT GROQ AI_ ⚡`
           )
           break
         case 'owner':
@@ -485,21 +538,51 @@ case 'download':
           })
           break
         }
-        case 'banned':
-          if (!text) return sendText('❌ Format: .banned [nomor]\nContoh: .banned 628123456789')
-          const banNum = text.replace(/[^0-9]/g, '')
-          if (!banNum) return sendText('❌ Nomor tidak valid')
-          await sendText(`✅ @${banNum} telah di-banned dari bot.`, { mentions: [`${banNum}@s.whatsapp.net`] })
-          break
+        case 'banned': {
+          if (!text) {
+            const list = loadBanned();
+            if (!list.length) return sendText('📋 Belum ada user yang dibanned.');
+            return sendText('🚫 *Daftar Banned:*\n\n' + list.map((n,i) => (i+1) + '. ' + n.replace('@s.whatsapp.net','')).join('\n'));
+          }
+          const banNum = text.replace(/[^0-9]/g, '');
+          if (!banNum) return sendText('❌ Nomor tidak valid');
+          const banList = loadBanned();
+          const banJid = banNum;
+          if (isOwner(banJid)) return sendText('❌ Tidak bisa banned owner!');
+          if (banList.includes(banJid)) return sendText('⚠️ User sudah dibanned sebelumnya.');
+          banList.push(banJid);
+          saveBanned(banList);
+          await sendText('✅ @' + banNum + ' telah di-banned dari bot.', { mentions: [banJid] });
+          break;
+        }
 
-        case 'unban':
-          if (!text) return sendText('❌ Format: .unban [nomor]')
-          const unbanNum = text.replace(/[^0-9]/g, '')
-          await sendText(`✅ @${unbanNum} telah di-unban.`, { mentions: [`${unbanNum}@s.whatsapp.net`] })
-          break
+        case 'users': {
+          const users = loadUsers();
+          const keys = Object.keys(users);
+          if (!keys.length) return sendText('📋 Belum ada user yang tercatat.');
+          const banned = loadBanned();
+          let msg2 = '👥 *Daftar User:*\n\n';
+          keys.forEach((lid, i) => {
+            const isBan = banned.includes(lid) ? ' 🚫' : '';
+            msg2 += (i+1) + '. ' + lid + isBan + '\n';
+          });
+          msg2 += '\n_🚫 = banned_';
+          return sendText(msg2);
+        }
+        case 'unban': {
+          if (!text) return sendText('❌ Format: .unban [nomor]');
+          const unbanNum = text.replace(/[^0-9]/g, '');
+          if (!unbanNum) return sendText('❌ Nomor tidak valid');
+          const unbanJid = findLidByNomor(unbanNum) || unbanNum;
+          const newList = loadBanned().filter(n => n !== unbanJid);
+          saveBanned(newList);
+          await sendText('✅ @' + unbanNum + ' telah di-unban.', { mentions: [unbanJid] });
+          break;
+        }
 
-        default:
-          await sendText(`❌ Command *${command}* tidak dikenal.\nKetik *${PREFIX}menu* untuk daftar command.`)
+      default:
+  await handleMessage(sock, msg)
+  break
       }
     } catch (err) {
       console.error('Error:', err)

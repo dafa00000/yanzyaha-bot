@@ -4,32 +4,13 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
-import { makeSticker, stickerToImage } from './features/sticker.js'
-import { downloadYoutube } from './features/youtube.js'
-import { downloadTiktok } from './features/tiktok.js'
-import { getInfo } from './features/info.js'
-import { checkMLProfile, formatMLProfile } from './features/mobilelegends.js'
+import { makeSticker, stickerToImage } from './src/features/sticker.js'
+import { downloadYoutube } from './src/features/youtube.js'
+import { downloadTiktok } from './src/features/tiktok.js'
+import { getInfo } from './src/features/info.js'
+import { checkMLProfile, formatMLProfile } from './src/features/mobilelegends.js'
 
-const fileManager = require('./file-manager');
-const handled = await fileManager.handle(sock, m);
-if (handled) return;
-const isHandled = await fileManager.handle(sock, m);
-if (isHandled) return;
-const fileManager = require('./file-manager');
 
-// Fungsi utama handler
-async function handleMessage(sock, m) {
-  // ── File Manager (harus paling atas) ──
-  const handled = await fileManager.handle(sock, m);
-  if (handled) return;
-
-  // ... sisa handler perintah bot kamu di bawah sini
-  const body = m.message?.conversation || '';
-  if (body === '.ping') {
-    await sock.sendMessage(m.key.remoteJid, { text: 'pong!' });
-  }
-  // dst...
-}
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const TEMP = path.join(__dirname, '../../temp')

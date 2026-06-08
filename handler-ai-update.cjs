@@ -1,24 +1,112 @@
 'use strict';
+const path = require('path');
+const fs = require('fs');
 
-// ─── ROTASI API KEY GROQ ──────────────────────────────────────────────────────
-// Tambahkan key-key Groq kamu di sini (daftar gratis di console.groq.com)
-const GROQ_KEYS = (process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY || '')
-  .split(',')
-  .map(k => k.trim())
-  .filter(Boolean);
+// ─── ROTASI API KEY GROQ ─────────────────────────────────────
 
-let groqKeyIndex = 0;
-
-function getNextGroqKey() {
-  if (!GROQ_KEYS.length) return null;
-  const key = GROQ_KEYS[groqKeyIndex];
-  groqKeyIndex = (groqKeyIndex + 1) % GROQ_KEYS.length;
-  return key;
+// ─── IMAGE GENERATION (Multi Fallback) ───────────────────────────────
+async function translatePrompt(prompt, groqKey) {
+  if (!groqKey) return prompt;
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + groqKey },
+      body: JSON.stringify({
+        model: 'llama-3.1-8b-instant',
+        messages: [{
+          role: 'user',
+          content: 'Translate this image prompt to English for AI image generation. Make it descriptive and detailed. Return ONLY the translated prompt, nothing else: ' + prompt
+        }],
+        max_tokens: 200,
+        temperature: 0.3,
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await res.json();
+    const translated = data.choices?.[0]?.message?.content?.trim();
+    if (translated) {
+      console.log('[Translate] ' + prompt + ' -> ' + translated);
+      return translated;
+    }
+  } catch (e) {
+    console.log('[Translate] gagal, pakai prompt asli');
+  }
+  return prompt;
 }
 
-const fs     = require('fs');
-const path   = require('path');
-const { spawn } = require('child_process');
+async function generateImage(prompt, groqKey) {
+  const envLines = fs.readFileSync(require('path').join(process.cwd(), '.env'), 'utf8').split('\n');
+  const getEnv = k => { const l = envLines.find(x => x.startsWith(k + '=')); return l ? l.split('=').slice(1).join('=').trim() : ''; };
+  const accountId = getEnv('CF_ACCOUNT_ID') || process.env.CF_ACCOUNT_ID;
+  const token = getEnv('CF_TOKEN') || process.env.CF_TOKEN;
+  if (!accountId || !token) throw new Error('CF credentials tidak ditemukan');
+
+  const englishPrompt = await translatePrompt(prompt, groqKey);
+  const cleanPrompt = englishPrompt + ', high quality, detailed, realistic, 4k';
+  console.log('[ImageGen] Final prompt:', cleanPrompt);
+
+  const url = 'https://api.cloudflare.com/client/v4/accounts/' + accountId + '/ai/run/@cf/black-forest-labs/flux-1-schnell';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: cleanPrompt }),
+    signal: AbortSignal.timeout(60000),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error('[CF Error]', res.status, errText.slice(0,200));
+    throw new Error('Cloudflare error: ' + res.status);
+  }
+  const ct = res.headers.get('content-type') || '';
+  if (ct.includes('image')) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    console.log('[ImageGen] Buffer size:', buf.length);
+    return buf;
+  }
+  const data = await res.json();
+  if (!data.success) throw new Error(data.errors?.[0]?.message || 'CF gagal');
+  const base64 = data.result?.image;
+  if (!base64) throw new Error('Tidak ada gambar di response CF');
+  return Buffer.from(base64, 'base64');
+}
+
+async function generatePuter(prompt) {
+  const encoded = encodeURIComponent(prompt);
+  const url = "https://api.puter.com/ai/txt2img?prompt=" + encoded + "&model=flux-schnell&width=1024&height=1024";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Puter failed");
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function generatePollinationsEnhanced(prompt) {
+  const encoded = encodeURIComponent(prompt);
+  const url = "https://image.pollinations.ai/prompt/" + encoded + "?width=512&height=512&model=flux&nologo=true";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error("Pollinations failed: " + res.status);
+    const buf = Buffer.from(await res.arrayBuffer());
+    console.log("[Pollinations] Buffer size:", buf.length);
+    return buf;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function generateFluxPro(prompt) {
+  const encoded = encodeURIComponent(prompt);
+  const url = "https://api.prodia.com/v1/sd/generate?prompt=" + encoded + "&model=flux";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("FluxPro failed");
+  return Buffer.from(await res.arrayBuffer());
+}
+
+
+
+
+
+
 
 const BOT_ROOT   = process.cwd();
 const BACKUP_DIR = path.join(BOT_ROOT, 'backup-ai');
@@ -369,6 +457,49 @@ async function handle(sock, m, geminiKey, groqKey) {
   // Abaikan pesan sangat pendek (emoji, "ok", "oke", dll)
   if (body.trim().length < 3) return false;
 
+// Abaikan pesan sangat pendek (emoji, "ok", "oke", dll)
+  if (body.trim().length < 3) return false;
+
+  // ── IMAGE GENERATION (buatkan foto / gambar) ─────────────────────────────
+  const lowerBody = body.toLowerCase();
+  const isImageCmd = /^(buatkan\s|buat\s(foto|gambar|image)|generate\s(foto|gambar|image|photo)|gambarkan|bikinin\s(foto|gambar))/i.test(body.trim());
+
+  if (isImageCmd) {
+    // Filter konten dewasa
+    const NSFW_WORDS = ["bokep","porno","nude","naked","sex","bugil","telanjang","hentai","xxx","18+","dewasa"];
+    if (NSFW_WORDS.some(w => body.toLowerCase().includes(w))) {
+      await sendText("❌ Konten tersebut tidak diizinkan.");
+      return true;
+    }
+    // Ambil prompt setelah kata pemicu
+    let imgPrompt = body
+      .replace(/^(buatkan|buat|generate|foto|gambar|image)\s*/i, '')
+      .trim();
+
+    if (imgPrompt.length < 3) {
+      await sendText('Contoh:\n*buatkan foto pemandangan gunung malam hari*\n*buatkan foto cewek cantik aesthetic*');
+      return true;
+    }
+
+    await sock.sendPresenceUpdate('composing', from);
+    await sendText(`🎨 *Generating image...*\n_${imgPrompt}_`);
+
+    try {
+      const imageBuffer = await generateImage(imgPrompt, groqKey);
+
+      await sock.sendMessage(from, {
+        image: imageBuffer,
+        caption: `✅ Ini hasilnya:\n_${imgPrompt}_`
+      }, { quoted: m });
+
+      return true; // sudah ditangani, jangan lanjut ke Groq
+    } catch (err) {
+      console.error('Image Gen Error:', err);
+      await sendText(`❌ Gagal generate gambar.\nError: ${err.message}\n\nCoba prompt lain atau set Cloudflare env.`);
+      return true;
+    }
+  }
+
   if (!groqKey) return false;
 
   try {
@@ -389,3 +520,5 @@ async function handle(sock, m, geminiKey, groqKey) {
 }
 
 module.exports = { handle };
+
+
