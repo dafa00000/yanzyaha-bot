@@ -3,11 +3,21 @@ import { parse } from 'node-html-parser'
 
 const cooldown = new Map()
 const COOLDOWN_MS = 5000
+const AUTO_DELETE_MS = 60 * 60 * 1000 // 1 jam
 
 export async function handleSearch(sock, msg, text, command) {
   const from = msg.key.remoteJid
   const sender = msg.key.participant || from
   const sendText = async (t) => sock.sendMessage(from, { text: t }, { quoted: msg })
+  const sendTextAutoDelete = async (t) => {
+    const sent = await sock.sendMessage(from, { text: t }, { quoted: msg })
+    setTimeout(async () => {
+      try {
+        await sock.sendMessage(from, { delete: sent.key })
+      } catch (e) {}
+    }, AUTO_DELETE_MS)
+    return sent
+  }
 
   const now = Date.now()
   const last = cooldown.get(sender) || 0
@@ -60,8 +70,8 @@ export async function handleSearch(sock, msg, text, command) {
       hasil += `🔗 ${link}\n\n`
     }
 
-    hasil += `_Powered by DuckDuckGo_`
-    await sendText(hasil.trim())
+    hasil += `_Powered by DuckDuckGo_\n_⏱️ Pesan ini akan dihapus dalam 1 jam_`
+    await sendTextAutoDelete(hasil.trim())
 
   } catch (err) {
     console.error('[handler-search] Error:', err)
