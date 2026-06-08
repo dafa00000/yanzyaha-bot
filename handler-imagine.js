@@ -102,23 +102,10 @@ async function getImageBuffer(sock, msg) {
 
 // ─── TEXT TO IMAGE ─────────────────────────────────────────────────────────
 async function textToImage(prompt) {
-  const url = `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/run/${CF_MODEL_TXT}`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${CF_API_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ prompt: prompt + ', highly detailed, 4k, sharp, high quality' }),
-    signal: AbortSignal.timeout(60000),
-  })
-
-  if (!res.ok) throw new Error(`API error ${res.status}`)
-  const data = await res.json()
-  if (!data.success) throw new Error(data.errors?.[0]?.message || 'Generate gagal')
-  const base64 = data.result?.image
-  if (!base64) throw new Error('Tidak ada gambar di response')
-  return Buffer.from(base64, 'base64')
+  const url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(prompt + ', highly detailed, 4k') + '?width=1024&height=1024&nologo=true&model=flux'
+  const res = await fetch(url, { signal: AbortSignal.timeout(60000) })
+  if (!res.ok) throw new Error('API error ' + res.status)
+  return Buffer.from(await res.arrayBuffer())
 }
 
 // ─── IMAGE TO IMAGE ────────────────────────────────────────────────────────
