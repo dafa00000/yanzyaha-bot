@@ -532,7 +532,7 @@ case 'download':
         case 'run': {
           if (!text) return sendText('❌ Contoh: .run ls')
           const { exec } = await import('child_process')
-          exec(text, { timeout: 10000, cwd: '/data/data/com.termux/files/home/wa-bot' }, async (err, stdout, stderr) => {
+          exec(text, { timeout: 10000, cwd: process.cwd() }, async (err, stdout, stderr) => {
             const out = stdout || stderr || err?.message || '(tidak ada output)'
             await sendText('📟 Output:\n' + out.slice(0, 3000))
           })
