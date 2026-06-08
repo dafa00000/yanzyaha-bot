@@ -130,7 +130,7 @@ async function startBot() {
 
   
 // ─── BANNED LIST ─────────────────────────────────────────────
-const BANNED_FILE = process.env.HOME + '/wa-bot/banned.json';
+const BANNED_FILE = './banned.json';
 function loadBanned() {
   try { return JSON.parse(fs.readFileSync(BANNED_FILE, 'utf8')); } catch { return []; }
 }
@@ -138,7 +138,7 @@ function saveBanned(list) {
   fs.writeFileSync(BANNED_FILE, JSON.stringify(list, null, 2));
 }
 // ─── USER LIST ─────────────────────────────────────────────
-const USERS_FILE = process.env.HOME + '/wa-bot/users.json';
+const USERS_FILE = './users.json';
 function loadUsers() {
   try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch { return {}; }
 }
