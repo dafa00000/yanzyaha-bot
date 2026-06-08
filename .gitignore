@@ -1,7 +1,1 @@
 node_modules/
-auth/
-temp/
-*.log
-.env
-users.json
-banned.json
