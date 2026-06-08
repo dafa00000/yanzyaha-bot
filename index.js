@@ -81,7 +81,8 @@ async function startBot() {
   sock.ev.on('creds.update', saveCreds)
 
   if (!sock.authState.creds.registered) {
-    let nomor = process.env.PHONE_NUMBER || await tanya('📱 Masukkan nomor WA kamu (contoh: 628123456789): ')
+    console.log('ENV PHONE:', process.env.PHONE_NUMBER)
+    let nomor = process.env.PHONE_NUMBER || await tanya('📱 Masukkan nomor WA kamu...')
     nomor = nomor.replace(/[^0-9]/g, '')
     if (nomor.startsWith('0')) nomor = '62' + nomor.slice(1)
 
