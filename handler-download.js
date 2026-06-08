@@ -8,7 +8,7 @@ const execAsync = promisify(exec)
 const TIMEOUT = 30000
 const TMP_DIR = '/tmp/wa-tmp'
 const MAX_DURATION = 6600
-if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR)
+if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true })
 
 function cleanTmp(filePath) { try { fs.unlinkSync(filePath) } catch {} }
 function isYouTubeUrl(url) { return /youtube\.com|youtu\.be/.test(url) }
