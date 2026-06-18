@@ -31,10 +31,19 @@ COPY . .
 # Persistent tmp dir for downloads (ephemeral on Railway but works for single session)
 RUN mkdir -p /tmp/wa-tmp && chmod 777 /tmp/wa-tmp
 
-# Use a startup script that optionally updates yt-dlp before launching
+# ⚠️ Railway detects Node.js projects via package.json and wraps CMD with `node`.
+# If we say CMD ["start-docker.sh"], it becomes `node start-docker.sh` → ERR_UNKNOWN_FILE_EXTENSION.
+# Fix: use shell-form CMD with explicit `sh -c` so Railway can't wrap it.
+#
 # Set UPDATE_YT_DLP=1 in Railway env to update yt-dlp on every deploy
 # (YT changes anti-bot frequently, fresh yt-dlp = higher success rate)
+CMD ["sh", "-c", "if [ \"$UPDATE_YT_DLP\" = \"1\" ]; then echo '[start] Updating yt-dlp...'; yt-dlp -U 2>&1 || echo '[start] yt-dlp update failed (non-fatal)'; fi; mkdir -p /tmp/wa-tmp; chmod 777 /tmp/wa-tmp 2>/dev/null || true; echo '[start] Launching bot...'; exec node index.js"]
+
+
+# Note: start-docker.sh kept in repo for local docker use / debugging.
+# For Railway, the inline CMD above is used (Railway can't wrap `sh -c ...`).
+# To use start-docker.sh locally:
+#   docker build -t yanzyaha-bot .
+#   docker run -it yanzyaha-bot sh /usr/local/bin/start-docker.sh
 COPY start-docker.sh /usr/local/bin/start-docker.sh
 RUN chmod +x /usr/local/bin/start-docker.sh
-
-CMD ["start-docker.sh"]
