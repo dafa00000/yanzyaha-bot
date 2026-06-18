@@ -40,6 +40,7 @@ import { execute as imagineExec, handleImagine, handleAutoImagine } from "./hand
 import { handleWeather } from './handler-weather.js'
 import { handleUpdate, handleRestart } from './handler-update.js'
 import { handleMessage } from "./handler.js"
+import { handleAutoDownload } from './handler-autodl.js'
 
 const require = createRequire(import.meta.url)
 const fileManager = require('./file-manager.cjs')
@@ -230,6 +231,21 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     // ================== AUTO IMAGE DETECT ==================
     const autoImg = await handleAutoImagine(sock, msg, body)
     if (autoImg) return
+
+    // ================== AUTO-DOWNLOAD (NO PREFIX) ==================
+    // Detect URL di pesan TANPA prefix command.
+    // - Private: trigger kalau body ada URL
+    // - Group  : trigger cuma kalau message essentially cuma URL
+    // - Differentiator:
+    //     plain URL              → full download
+    //     "clip <url> <s> <e>"   → manual clip
+    //     "auto <url>"           → AI autoclip (Gemini)
+    //     "MM:SS <url>"          → clip 60 detik dari MM:SS
+    if (body && !body.startsWith(PREFIX)) {
+      const autoHandled = await handleAutoDownload(sock, msg, body, isGroup)
+      if (autoHandled) return
+    }
+    // ================== END AUTO-DOWNLOAD ==================
 
     // ================== AI CHAT REALISTIS (Tanpa Perlu .ai) ==================
     if (body && !body.startsWith(PREFIX)) {

@@ -5,7 +5,8 @@
   "license": "ISC",
   "main": "index.js",
   "scripts": {
-  "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --experimental-loader ./tests/stub-loader.mjs tests/autodl.test.mjs"
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",

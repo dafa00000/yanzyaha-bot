@@ -20,6 +20,23 @@ Bot WhatsApp dengan berbagai fitur, dibuat menggunakan [@whiskeysockets/baileys]
 | `.ytdl [link]` | Download video YouTube (maks 10 menit) |
 | `.ytmp3 [link]` | Download audio YouTube |
 | `.ttdl [link]` | Download video TikTok (tanpa watermark) |
+| `.clip [link] [mulai] [akhir]` | Clip YouTube (range waktu) |
+
+### ⚡ Auto-Download (Tanpa Prefix)
+Kirim link langsung — bot auto-download. Bisa juga pake keyword untuk mode khusus.
+
+| Format User | Aksi |
+|-------------|------|
+| `https://youtu.be/xxx` | Full download YouTube |
+| `https://vm.tiktok.com/xxx` | Download TikTok (no watermark) |
+| `https://x.com/user/status/123` | Download video Twitter/X |
+| `https://pin.it/xxx` | Download Pinterest |
+| `0:42 https://youtu.be/xxx` | Clip 60 detik mulai dari 0:42 |
+| `1:30:00 https://youtu.be/xxx` | Clip 60 detik mulai dari 1j 30m |
+| `clip https://youtu.be/xxx 01:30 02:45` | Clip range waktu spesifik |
+| `auto https://youtu.be/xxx` | AI-powered autoclip (picks best moment) |
+
+> 📝 **Catatan:** Di grup, auto-download cuma trigger kalau message essentially cuma URL (biar gak nabrak chat normal). Di private chat, auto-detect selama ada URL di body.
 
 ### 👤 Cek Profil Sosmed
 | Command | Fungsi |
