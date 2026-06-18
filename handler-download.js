@@ -103,96 +103,115 @@ function writeIgCookiesFile(sessionid, csrftoken = 'placeholder', userId = 'plac
   }
 }
 
-// ─── COBALT.FALLBACK ────────────────────────────────────────────────────────
-// Cobalt.tools API — open-source video downloader, supports 100+ sites
-// (IG, FB, Twitter, TikTok, Reddit, dll). Useful when yt-dlp gets blocked
-// by aggressive anti-bot (Railway/VPS IPs sering kena).
-// Docs: https://github.com/imputnet/cobalt
+// ─── RENDER API FALLBACKS (discardapi + gtech) ──────────────────────────────
+// Free-tier Render APIs that proxy IG/FB/TikTok downloads via RapidAPI.
+// Pattern: API returns JSON { status, data: { url, ... } } → stream URL
+// directly to WhatsApp (no disk download needed, much faster).
 //
-// API spec (cobalt 10+):
-//   POST /api/json
-//   { "url": "...", "videoQuality": "720" }   // quality: 360|480|720|1080|1440|2160|max
-//   Response: { status: "tunnel"|"redirect"|"picker"|"error", url?, error? }
-async function downloadViaCobalt(url) {
-  const COBALT_INSTANCES = [
-    process.env.COBALT_API_URL,           // user-provided custom instance
-    'https://api.cobalt.tools',           // official public
-    'https://co.wuk.sh',                  // community instance #1
-  ].filter(Boolean)
+// Note: these are free public APIs (same ones MEGA-MD-RECODE uses).
+// May be rate-limited. yt-dlp remains primary strategy.
 
-  // Two request formats — newer cobalt 10+ and older cobalt 7-9
-  const REQUEST_FORMATS = [
-    { label: 'v10+', body: { url, videoQuality: '720' } },
-    { label: 'v7-9', body: { url, isAudioOnly: false } },
-  ]
-
-  for (const instance of COBALT_INSTANCES) {
-    for (const fmt of REQUEST_FORMATS) {
-      try {
-        const res = await axios.post(
-          `${instance}/api/json`,
-          fmt.body,
-          {
-            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-            timeout: 60000,
-            validateStatus: s => s < 500,
-          }
-        )
-
-        const d = res.data
-        const errInfo = d?.error ? ` (${d.error.code || JSON.stringify(d.error).slice(0, 100)})` : ''
-        console.log(`[cobalt] ${instance} [${fmt.label}] → ${d?.status}${errInfo}`)
-
-        if (d?.status === 'tunnel' || d?.status === 'redirect') {
-          if (d.url) return { url: d.url, source: `${instance} [${fmt.label}]` }
-        }
-        if (d?.status === 'stream' && d.url) {
-          return { url: d.url, source: `${instance} [${fmt.label}]`, isDataUri: true }
-        }
-        // error → try next format / instance
-        break  // don't retry same instance with another format if it errored cleanly
-      } catch (err) {
-        console.error(`[cobalt] ${instance} [${fmt.label}] HTTP error:`, err.message, err.response?.status)
-        // continue to next format
-      }
-    }
+// discardapi (creator: GlobalTechInfo) — handles TikTok + Instagram
+async function downloadViaDiscardapi(url, type) {
+  const endpoints = {
+    tiktok:    `https://discardapi.onrender.com/api/dl/tiktok?apikey=guru&url=${encodeURIComponent(url)}`,
+    instagram: `https://discardapi.onrender.com/api/dl/instagram?apikey=guru&url=${encodeURIComponent(url)}`,
   }
-  return null
+  const apiUrl = endpoints[type]
+  if (!apiUrl) return null
+
+  try {
+    const res = await axios.get(apiUrl, {
+      timeout: 90000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      validateStatus: s => s < 500,
+    })
+    const d = res.data
+    console.log(`[discardapi] ${type} → status: ${d?.status}, code: ${d?.code}`)
+    // Response: { status: true, code: 200, data: { url, ... } } OR { status: false, code, message }
+    if (d?.status && d?.data?.url) {
+      return { url: d.data.url, source: 'discardapi' }
+    }
+    if (d?.status && d?.data?.data?.url) {  // some endpoints nest deeper
+      return { url: d.data.data.url, source: 'discardapi' }
+    }
+    return null
+  } catch (err) {
+    console.error(`[discardapi] ${type} failed:`, err.message)
+    return null
+  }
 }
 
-// Download with fallback chain: yt-dlp → cobalt.tools
-async function downloadWithFallback(url, platformLabel = '') {
-  // Strategy 1: yt-dlp (best for YT/TT — usually works for those)
+// gtech-api — handles Facebook
+async function downloadViaGtechFB(url) {
+  const apiUrl = `https://gtech-api-xtp1.onrender.com/api/download/fb?url=${encodeURIComponent(url)}&apikey=APIKEY`
   try {
-    return { filePath: await downloadWithYtdlp(url, false, platformLabel), source: 'yt-dlp' }
-  } catch (ytdlpErr) {
-    console.error(`[download] yt-dlp failed for ${platformLabel || url}: ${ytdlpErr.message?.slice(0, 200)}`)
-    console.error('[download] Falling back to cobalt.tools...')
+    const res = await axios.get(apiUrl, {
+      timeout: 90000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      validateStatus: s => s < 500,
+    })
+    const d = res.data
+    console.log(`[gtech] fb → status: ${d?.status}`)
+    // Response: { status: true, data: { data: [{ resolution, url, thumbnail }] } }
+    if (d?.status && Array.isArray(d?.data?.data) && d.data.data.length) {
+      // Pick highest resolution
+      const sorted = [...d.data.data].sort((a, b) => {
+        const qa = parseInt(a.resolution, 10) || 0
+        const qb = parseInt(b.resolution, 10) || 0
+        return qb - qa
+      })
+      const url2 = sorted[0].url
+      // gtech returns relative URLs sometimes
+      const fullUrl = url2.startsWith('http') ? url2 : `https://gtech-api-xtp1.onrender.com${url2}`
+      return { url: fullUrl, source: 'gtech', resolution: sorted[0].resolution }
+    }
+    return null
+  } catch (err) {
+    console.error(`[gtech] fb failed:`, err.message)
+    return null
   }
+}
 
-  // Strategy 2: cobalt.tools (best for IG/FB — bypasses IP blocks)
-  const cobalt = await downloadViaCobalt(url)
-  if (cobalt) {
-    const filePath = path.join(TMP_DIR, `dl-${Date.now()}.mp4`)
+// ─── DOWNLOAD WITH FALLBACK ─────────────────────────────────────────────────
+// Strategy depends on platform:
+//   YT / Twitter / Pinterest / TikTok → yt-dlp first (reliable)
+//   Instagram → discardapi → yt-dlp → cobalt (if user provides self-host URL)
+//   Facebook  → gtech fb → yt-dlp → cobalt
+async function downloadWithFallback(url, platformLabel = '') {
+  const platform = platformLabel.toLowerCase()
+
+  // For IG: prefer discardapi (fast, returns direct URL)
+  if (platform === 'instagram' || platform === 'ig') {
+    const apiResult = await downloadViaDiscardapi(url, 'instagram')
+    if (apiResult) return { ...apiResult, type: 'direct' }
+    // fallback to yt-dlp
     try {
-      const videoRes = await axios.get(cobalt.url, {
-        responseType: 'stream',
-        timeout: 180000,
-        maxContentLength: 200 * 1024 * 1024,
-      })
-      await new Promise((resolve, reject) => {
-        const writer = fs.createWriteStream(filePath)
-        videoRes.data.pipe(writer)
-        writer.on('finish', resolve)
-        writer.on('error', reject)
-      })
-      return { filePath, source: `cobalt (${new URL(cobalt.source).hostname})` }
-    } catch (err) {
-      console.error(`[download] cobalt stream failed: ${err.message}`)
+      return { filePath: await downloadWithYtdlp(url, false, platform), source: 'yt-dlp', type: 'file' }
+    } catch (e) {
+      console.error(`[download] yt-dlp failed for IG: ${e.message?.slice(0, 200)}`)
     }
   }
 
-  throw new Error('All download strategies failed (yt-dlp + cobalt)')
+  // For FB: prefer gtech fb (fast, returns direct URL)
+  if (platform === 'facebook' || platform === 'fb') {
+    const apiResult = await downloadViaGtechFB(url)
+    if (apiResult) return { ...apiResult, type: 'direct' }
+    // fallback to yt-dlp
+    try {
+      return { filePath: await downloadWithYtdlp(url, false, platform), source: 'yt-dlp', type: 'file' }
+    } catch (e) {
+      console.error(`[download] yt-dlp failed for FB: ${e.message?.slice(0, 200)}`)
+    }
+  }
+
+  // Default: yt-dlp (YT, Twitter, Pinterest, generic)
+  try {
+    return { filePath: await downloadWithYtdlp(url, false, platform), source: 'yt-dlp', type: 'file' }
+  } catch (ytdlpErr) {
+    console.error(`[download] yt-dlp failed for ${platform || url}: ${ytdlpErr.message?.slice(0, 200)}`)
+    throw ytdlpErr
+  }
 }
 
 async function downloadTikTok(url) {
@@ -357,38 +376,41 @@ export async function handleDownload(sock, msg, text, command) {
   if (command === 'igdl') {
     if (!url || !isInstagramUrl(url)) return sendText('❌ Format salah! Contoh: .igdl https://www.instagram.com/reel/xxxxx')
     await sendText('⏳ Sedang mengunduh dari Instagram...')
-    let filePath = null
     try {
-      // Ambil metadata dulu (title, uploader) buat caption
-      let caption = '📸 Downloaded by WA Bot'
+      const result = await downloadWithFallback(url, 'instagram')
+      console.log(`[igdl] downloaded via ${result.source} (${result.type})`)
+
+      // Build caption with metadata if available
+      let finalCaption = `📸 *Instagram*${result.source ? ` — ${result.source}` : ''}\n\n_Downloaded by WA Bot_`
       try {
         const { stdout: meta } = await execAsync(
-          `yt-dlp --print title --print uploader --print duration --no-playlist "${url}"`,
+          `yt-dlp --print title --print uploader --no-playlist "${url}"`,
           { timeout: 30000 }
         )
-        const [title, uploader, duration] = meta.trim().split('\n').map(s => s.trim())
-        const dur = duration ? Math.round(parseInt(duration) || 0) : 0
-        const durStr = dur > 0 ? ` (${dur}s)` : ''
+        const [title, uploader] = meta.trim().split('\n').map(s => s.trim())
         if (title || uploader) {
-          caption = `📸 *Instagram${title ? `* — ${title}` : ''}*${durStr}\n👤 @${uploader || 'unknown'}\n\n_Downloaded by WA Bot_`
+          finalCaption = `📸 *Instagram*\n${title ? `📝 ${title}\n` : ''}${uploader ? `👤 @${uploader}\n` : ''}\n_Downloaded by WA Bot_`
         }
-      } catch {
-        // Metadata fetch failed — proceed with default caption
+      } catch { /* metadata fetch optional */ }
+
+      if (result.type === 'direct') {
+        // Stream URL directly to WA (faster, no disk)
+        await sock.sendMessage(from, {
+          video: { url: result.url },
+          caption: finalCaption,
+          mimetype: 'video/mp4',
+        }, { quoted: msg })
+      } else {
+        // File path (from yt-dlp fallback) — check size + send
+        const fpath = result.filePath
+        const sizeMB = fs.statSync(fpath).size / 1024 / 1024
+        if (sizeMB > 64) {
+          cleanTmp(fpath)
+          return sendText(`⚠️ Video terlalu besar (*${sizeMB.toFixed(1)} MB*). Instagram limit.\n\nCoba:\n🔗 https://saveig.app\nPaste: ${url}`)
+        }
+        await sock.sendMessage(from, { video: fs.readFileSync(fpath), caption: finalCaption, mimetype: 'video/mp4' }, { quoted: msg })
+        cleanTmp(fpath)
       }
-
-      // yt-dlp → cobalt fallback (Railway IP sering di-block IG)
-      const result = await downloadWithFallback(url, 'instagram')
-      filePath = result.filePath
-      console.log(`[igdl] downloaded via ${result.source}`)
-
-      // Size check (WA limit ~64MB)
-      const sizeMB = fs.statSync(filePath).size / 1024 / 1024
-      if (sizeMB > 64) {
-        cleanTmp(filePath)
-        return sendText(`⚠️ Video terlalu besar (*${sizeMB.toFixed(1)} MB*). Instagram limit download.\n\nCoba:\n🔗 https://saveig.app\nPaste: ${url}`)
-      }
-
-      await sock.sendMessage(from, { video: fs.readFileSync(filePath), caption, mimetype: 'video/mp4' }, { quoted: msg })
     } catch (err) {
       const cookiesHelp = !process.env.IG_SESSIONID && !process.env.IG_COOKIES_FILE
         ? `\n\n💡 *Fix permanen:* set Railway env var\n   \`IG_SESSIONID=<sessionid lo>\`\n   (lihat di IG → DevTools → Application → Cookies)`
@@ -398,14 +420,12 @@ export async function handleDownload(sock, msg, text, command) {
         `Penyebab umum:\n` +
         `• IP Railway di-block IG (paling sering)\n` +
         `• Video private / butuh login\n` +
-        `• Cobalt public API perlu JWT (gak free lagi)${cookiesHelp}\n\n` +
+        `• API public sedang down${cookiesHelp}\n\n` +
         `Coba alternatif web:\n` +
         `🔗 https://saveig.app\n` +
         `🔗 https://snapinsta.app\n\n` +
         `Paste: ${url}`
       )
-    } finally {
-      if (filePath) cleanTmp(filePath)
     }
     return
   }
@@ -413,38 +433,31 @@ export async function handleDownload(sock, msg, text, command) {
   if (command === 'fbdl') {
     if (!url || !isFacebookUrl(url)) return sendText('❌ Format salah! Contoh: .fbdl https://www.facebook.com/share/v/xxxxx')
     await sendText('⏳ Sedang mengunduh dari Facebook...')
-    let filePath = null
     try {
-      // Ambil metadata dulu (title, uploader) buat caption
-      let caption = '📘 Downloaded by WA Bot'
-      try {
-        const { stdout: meta } = await execAsync(
-          `yt-dlp --print title --print uploader --print duration --no-playlist "${url}"`,
-          { timeout: 30000 }
-        )
-        const [title, uploader, duration] = meta.trim().split('\n').map(s => s.trim())
-        const dur = duration ? Math.round(parseInt(duration) || 0) : 0
-        const durStr = dur > 0 ? ` (${dur}s)` : ''
-        if (title || uploader) {
-          caption = `📘 *Facebook${title ? `* — ${title}` : ''}*${durStr}\n👤 ${uploader || 'unknown'}\n\n_Downloaded by WA Bot_`
-        }
-      } catch {
-        // Metadata fetch failed — proceed with default caption
-      }
-
-      // yt-dlp → cobalt fallback (FB juga agresif anti-bot)
+      // gtech fb → yt-dlp fallback
       const result = await downloadWithFallback(url, 'facebook')
-      filePath = result.filePath
-      console.log(`[fbdl] downloaded via ${result.source}`)
+      console.log(`[fbdl] downloaded via ${result.source} (${result.type})`)
 
-      // Size check (WA limit ~64MB)
-      const sizeMB = fs.statSync(filePath).size / 1024 / 1024
-      if (sizeMB > 64) {
-        cleanTmp(filePath)
-        return sendText(`⚠️ Video terlalu besar (*${sizeMB.toFixed(1)} MB*). FB limit download.\n\nCoba:\n🔗 https://fdown.net\nPaste: ${url}`)
+      // Build caption with metadata
+      let finalFbCaption = `📘 *Facebook* — ${result.resolution || result.source}\n\n_Downloaded by WA Bot_`
+
+      if (result.type === 'direct') {
+        // Stream URL directly to WA (faster)
+        await sock.sendMessage(from, {
+          video: { url: result.url },
+          caption: finalFbCaption,
+          mimetype: 'video/mp4',
+        }, { quoted: msg })
+      } else {
+        const fpath = result.filePath
+        const sizeMB = fs.statSync(fpath).size / 1024 / 1024
+        if (sizeMB > 64) {
+          cleanTmp(fpath)
+          return sendText(`⚠️ Video terlalu besar (*${sizeMB.toFixed(1)} MB*). FB limit.\n\nCoba:\n🔗 https://fdown.net\nPaste: ${url}`)
+        }
+        await sock.sendMessage(from, { video: fs.readFileSync(fpath), caption: finalFbCaption, mimetype: 'video/mp4' }, { quoted: msg })
+        cleanTmp(fpath)
       }
-
-      await sock.sendMessage(from, { video: fs.readFileSync(filePath), caption, mimetype: 'video/mp4' }, { quoted: msg })
     } catch (err) {
       const cookiesHelp = !process.env.FB_COOKIES_FILE
         ? `\n\n💡 *Fix permanen:* export cookies FB dari browser\n   (extension "Get cookies.txt LOCALLY" → save as file →\n    upload ke Railway volume, set env var\n    \`FB_COOKIES_FILE=/app/fb-cookies.txt\`)`
@@ -460,8 +473,6 @@ export async function handleDownload(sock, msg, text, command) {
         `🔗 https://snapsave.app\n\n` +
         `Paste: ${url}`
       )
-    } finally {
-      if (filePath) cleanTmp(filePath)
     }
     return
   }
