@@ -134,9 +134,30 @@ npm start
 #   WA_TMP_DIR=/tmp/wa-tmp → override tmp directory (default: auto-detect)
 #   GROQ_API_KEY=...       → untuk fitur AI chat
 #   GEMINI_API_KEY=...     → untuk fitur autoclip
+#
+# Untuk IG/FB download (yg sering kena anti-bot dari Railway IP):
+#   IG_SESSIONID=<value>   → sessionid cookie dari browser lo
+#   IG_COOKIES_FILE=/path  → OR path ke Netscape cookies.txt file
+#   FB_COOKIES_FILE=/path  → sama untuk Facebook
+#
+# Untuk self-hosted cobalt (opsional, advanced):
+#   COBALT_API_URL=https://cobalt-lo.railway.app  → skip cobalt public API
 ```
 
 > ⚠️ **Railway ephemeral filesystem**: folder `auth/` (session WA) akan reset tiap restart. Lo perlu setup persistent Volume di Railway, atau pakai layanan WA gateway seperti `waziper` / `whatsapp-api`.
+
+### 🔑 Cara Ambil Instagram Session ID (untuk bypass IG anti-bot)
+
+1. Buka https://www.instagram.com di Chrome (login akun lo)
+2. Tekan `F12` → tab **Application** → **Cookies** → `https://www.instagram.com`
+3. Cari cookie bernama **`sessionid`**, copy nilainya (panjang ~50 char)
+4. Di Railway dashboard → service bot → **Variables** → tambah:
+   ```
+   IG_SESSIONID=<nilai yang lo copy>
+   ```
+5. Redeploy
+
+Sekarang bot bisa download IG reels/posts meskipun dari Railway IP.
 
 ---
 
