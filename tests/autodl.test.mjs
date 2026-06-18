@@ -33,6 +33,15 @@ const cases = [
   // IG image posts (no /reel/, /p/, /tv/) — should NOT trigger download
   ['https://www.instagram.com/username/',         false, null],
 
+  // Facebook — share, watch, reels, fb.watch (from user report)
+  ['https://www.facebook.com/share/v/1D3JTSEo8j/', false, 'download', 'facebook'],
+  ['https://www.facebook.com/watch/?v=1234567890', false, 'download', 'facebook'],
+  ['https://fb.watch/abc123def/',                  false, 'download', 'facebook'],
+  ['https://www.facebook.com/username/videos/1234567890/', false, 'download', 'facebook'],
+  ['https://www.facebook.com/reel/1234567890/',    false, 'download', 'facebook'],
+  // Plain profile URL — should NOT trigger
+  ['https://www.facebook.com/username/',           false, null],
+
   // Timestamp prefix
   ['0:42 https://youtu.be/dQw4w9WgXcQ',            false, 'tsClip'],
   ['1:23:45 https://www.youtube.com/watch?v=dQw4w9WgXcQ', false, 'tsClip'],

@@ -35,7 +35,12 @@ import { YoutubeTranscript } from 'youtube-transcript'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
 const execAsync = promisify(exec)
-const TMP_DIR = '/sdcard/wa-tmp'
+// TMP_DIR: use env override if set, else cross-platform default
+//   - Termux (Android): /sdcard/wa-tmp (persistent storage)
+//   - Linux/VPS/Railway/Docker: /tmp/wa-tmp (ephemeral, but OK for downloads)
+const TMP_DIR = process.env.WA_TMP_DIR || (
+  process.env.PREFIX?.includes('com.termux') ? '/sdcard/wa-tmp' : '/tmp/wa-tmp'
+)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
 const TG_CHANNEL = 'https://t.me/yanzyahabotc'

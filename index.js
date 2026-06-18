@@ -439,6 +439,7 @@ case 'twdl':
 case 'xdl':
 case 'pindl':
 case 'igdl':
+case 'fbdl':
 case 'clip':
 case 'dl':
 case 'download':

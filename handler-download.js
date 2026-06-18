@@ -16,6 +16,7 @@ function isTikTokUrl(url) { return /tiktok\.com|vm\.tiktok\.com/.test(url) }
 function isTwitterUrl(url) { return /twitter\.com|x\.com/.test(url) }
 function isPinterestUrl(url) { return /pinterest\.com|pin\.it/.test(url) }
 function isInstagramUrl(url) { return /instagram\.com/.test(url) }
+function isFacebookUrl(url) { return /facebook\.com|fb\.watch/.test(url) }
 function cleanUrl(url) { return url.split('?')[0] }
 
 async function isYtdlpSupported(url) {
@@ -241,6 +242,55 @@ export async function handleDownload(sock, msg, text, command) {
         `Coba alternatif:\n` +
         `🔗 https://saveig.app\n` +
         `🔗 https://snapinsta.app\n\n` +
+        `Paste: ${url}`
+      )
+    } finally {
+      if (filePath) cleanTmp(filePath)
+    }
+    return
+  }
+
+  if (command === 'fbdl') {
+    if (!url || !isFacebookUrl(url)) return sendText('❌ Format salah! Contoh: .fbdl https://www.facebook.com/share/v/xxxxx')
+    await sendText('⏳ Sedang mengunduh dari Facebook...')
+    let filePath = null
+    try {
+      // Ambil metadata dulu (title, uploader) buat caption
+      let caption = '📘 Downloaded by WA Bot'
+      try {
+        const { stdout: meta } = await execAsync(
+          `yt-dlp --print title --print uploader --print duration --no-playlist "${url}"`,
+          { timeout: 30000 }
+        )
+        const [title, uploader, duration] = meta.trim().split('\n').map(s => s.trim())
+        const dur = duration ? Math.round(parseInt(duration) || 0) : 0
+        const durStr = dur > 0 ? ` (${dur}s)` : ''
+        if (title || uploader) {
+          caption = `📘 *Facebook${title ? `* — ${title}` : ''}*${durStr}\n👤 ${uploader || 'unknown'}\n\n_Downloaded by WA Bot_`
+        }
+      } catch {
+        // Metadata fetch failed — proceed with default caption
+      }
+
+      filePath = await downloadWithYtdlp(url)
+
+      // Size check (WA limit ~64MB)
+      const sizeMB = fs.statSync(filePath).size / 1024 / 1024
+      if (sizeMB > 64) {
+        cleanTmp(filePath)
+        return sendText(`⚠️ Video terlalu besar (*${sizeMB.toFixed(1)} MB*). FB limit download.\n\nCoba:\n🔗 https://fdown.net\nPaste: ${url}`)
+      }
+
+      await sock.sendMessage(from, { video: fs.readFileSync(filePath), caption, mimetype: 'video/mp4' }, { quoted: msg })
+    } catch (err) {
+      await sendText(
+        `❌ Gagal download Facebook.\n\n` +
+        `Kemungkinan:\n` +
+        `• Video private / restricted\n` +
+        `• Perlu login (FB sering blokir anonymous download)\n\n` +
+        `Coba alternatif:\n` +
+        `🔗 https://fdown.net\n` +
+        `🔗 https://snapsave.app\n\n` +
         `Paste: ${url}`
       )
     } finally {

@@ -24,6 +24,8 @@ const RE = {
   pinterest: /https?:\/\/(?:www\.|pin\.)?(?:pinterest\.com\/[\w/?=&-]+|pinterest\.com\/pin\/[\w/?=&-]+|pin\.it\/[\w]+)/i,
   // Instagram: reels, posts (with video), tv — shortcodes are alphanumeric 8-15 chars
   instagram: /https?:\/\/(?:www\.)?instagram\.com\/(?:reel|reels|p|tv)\/[\w-]+\/?/i,
+  // Facebook: share, watch, reels, fb.watch — permissive on purpose (yt-dlp validates)
+  facebook:   /https?:\/\/(?:[\w-]+\.)?(?:facebook\.com\/(?:share\/[\w/?=&-]+|watch\/?(?:\?v=\d+)?|[\w.-]+\/videos\/\d+|reel\/\d+|stories\/\d+)|fb\.watch\/[\w]+)\/?/i,
   anyUrl:    /https?:\/\/\S+/i,
 
   // Timestamp prefix: "0:42 <url>" or "1:23:45 <url>"
@@ -92,6 +94,7 @@ export function detectAction(body, isGroup = false) {
   else if (RE.twitter.test(url)) platform = 'twitter'
   else if (RE.pinterest.test(url)) platform = 'pinterest'
   else if (RE.instagram.test(url)) platform = 'instagram'
+  else if (RE.facebook.test(url)) platform = 'facebook'
   if (!platform) return null
 
   // Di group: cuma respond kalau message "essentially" cuma URL (atau starts-with URL)
@@ -112,6 +115,7 @@ const CMD_MAP = {
   twitter:   'twdl',
   pinterest: 'pindl',
   instagram: 'igdl',
+  facebook:  'fbdl',
 }
 
 /**

@@ -21,6 +21,7 @@ Bot WhatsApp dengan berbagai fitur, dibuat menggunakan [@whiskeysockets/baileys]
 | `.ytmp3 [link]` | Download audio YouTube |
 | `.ttdl [link]` | Download video TikTok (tanpa watermark) |
 | `.igdl [link]` | Download Instagram Reel/Post/TV |
+| `.fbdl [link]` | Download Facebook (share/watch/reel) |
 | `.clip [link] [mulai] [akhir]` | Clip YouTube (range waktu) |
 
 ### ⚡ Auto-Download (Tanpa Prefix)
@@ -34,6 +35,8 @@ Kirim link langsung — bot auto-download. Bisa juga pake keyword untuk mode khu
 | `https://pin.it/xxx` | Download Pinterest |
 | `https://www.instagram.com/reel/xxx` | Download Instagram Reel |
 | `https://www.instagram.com/p/xxx` | Download Instagram Post (kalau video) |
+| `https://www.facebook.com/share/v/xxx` | Download Facebook video |
+| `https://fb.watch/xxx` | Download Facebook (short URL) |
 | `0:42 https://youtu.be/xxx` | Clip 60 detik mulai dari 0:42 |
 | `1:30:00 https://youtu.be/xxx` | Clip 60 detik mulai dari 1j 30m |
 | `clip https://youtu.be/xxx 01:30 02:45` | Clip range waktu spesifik |
@@ -114,13 +117,26 @@ npm start
 ```
 
 ### Di Linux / VPS
-
 ```bash
 git clone https://github.com/USERNAME/wa-bot-simple
 cd wa-bot-simple
 bash install.sh
 npm start
 ```
+
+### Di Railway / Docker (rekomendasi untuk production)
+```bash
+# Railway auto-detect Dockerfile, tinggal push ke repo
+# Container sudah include: python3, ffmpeg, yt-dlp
+
+# Optional env vars di Railway dashboard:
+#   UPDATE_YT_DLP=1       → update yt-dlp ke versi terbaru tiap deploy
+#   WA_TMP_DIR=/tmp/wa-tmp → override tmp directory (default: auto-detect)
+#   GROQ_API_KEY=...       → untuk fitur AI chat
+#   GEMINI_API_KEY=...     → untuk fitur autoclip
+```
+
+> ⚠️ **Railway ephemeral filesystem**: folder `auth/` (session WA) akan reset tiap restart. Lo perlu setup persistent Volume di Railway, atau pakai layanan WA gateway seperti `waziper` / `whatsapp-api`.
 
 ---
 
