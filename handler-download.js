@@ -41,8 +41,87 @@ async function downloadWithYtdlp(url, audioOnly = false) {
   const ext = audioOnly ? 'mp3' : 'mp4'
   const filePath = path.join(TMP_DIR, `${Date.now()}.${ext}`)
   const format = audioOnly ? `-x --audio-format mp3` : `-f "best[height<=720]"`
-  await execAsync(`yt-dlp ${format} -o "${filePath}" "${url}"`, { timeout: 120000 })
+  // Use realistic browser User-Agent (bypasses some anti-bot blocks)
+  const ua = '"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"'
+  await execAsync(`yt-dlp ${format} --user-agent ${ua} -o "${filePath}" "${url}"`, { timeout: 120000 })
   return filePath
+}
+
+// ─── COBALT.FALLBACK ────────────────────────────────────────────────────────
+// Cobalt.tools API — open-source video downloader, supports 100+ sites
+// (IG, FB, Twitter, TikTok, Reddit, dll). Useful when yt-dlp gets blocked
+// by aggressive anti-bot (Railway/VPS IPs sering kena).
+// Docs: https://github.com/imputnet/cobalt
+async function downloadViaCobalt(url) {
+  const COBALT_INSTANCES = [
+    process.env.COBALT_API_URL,           // user-provided custom instance
+    'https://api.cobalt.tools',           // official public instance
+  ].filter(Boolean)
+
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      const res = await axios.post(
+        `${instance}/api/json`,
+        { url, isAudioOnly: false, aFormat: 'mp4', filenamePattern: 'classic' },
+        {
+          headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+          timeout: 60000,
+          validateStatus: s => s < 500,
+        }
+      )
+
+      const d = res.data
+      // Cobalt response shapes:
+      //   { status: 'tunnel' | 'redirect', url: 'https://...' }
+      //   { status: 'stream', url: 'data:...' }
+      //   { status: 'error', error: { code: '...' } }
+      if (d?.status === 'tunnel' || d?.status === 'redirect') {
+        if (d.url) return { url: d.url, source: instance }
+      }
+      if (d?.status === 'stream' && d.url) {
+        return { url: d.url, source: instance, isDataUri: true }
+      }
+      console.error(`[cobalt] ${instance} returned:`, d?.error?.code || d?.status || 'unknown')
+    } catch (err) {
+      console.error(`[cobalt] ${instance} failed:`, err.message)
+    }
+  }
+  return null
+}
+
+// Download with fallback chain: yt-dlp → cobalt.tools
+async function downloadWithFallback(url, platformLabel = '') {
+  // Strategy 1: yt-dlp (best for YT/TT — usually works for those)
+  try {
+    return { filePath: await downloadWithYtdlp(url), source: 'yt-dlp' }
+  } catch (ytdlpErr) {
+    console.error(`[download] yt-dlp failed for ${platformLabel || url}: ${ytdlpErr.message?.slice(0, 200)}`)
+    console.error('[download] Falling back to cobalt.tools...')
+  }
+
+  // Strategy 2: cobalt.tools (best for IG/FB — bypasses IP blocks)
+  const cobalt = await downloadViaCobalt(url)
+  if (cobalt) {
+    const filePath = path.join(TMP_DIR, `dl-${Date.now()}.mp4`)
+    try {
+      const videoRes = await axios.get(cobalt.url, {
+        responseType: 'stream',
+        timeout: 180000,
+        maxContentLength: 200 * 1024 * 1024,
+      })
+      await new Promise((resolve, reject) => {
+        const writer = fs.createWriteStream(filePath)
+        videoRes.data.pipe(writer)
+        writer.on('finish', resolve)
+        writer.on('error', reject)
+      })
+      return { filePath, source: `cobalt (${new URL(cobalt.source).hostname})` }
+    } catch (err) {
+      console.error(`[download] cobalt stream failed: ${err.message}`)
+    }
+  }
+
+  throw new Error('All download strategies failed (yt-dlp + cobalt)')
 }
 
 async function downloadTikTok(url) {
@@ -226,7 +305,10 @@ export async function handleDownload(sock, msg, text, command) {
         // Metadata fetch failed — proceed with default caption
       }
 
-      filePath = await downloadWithYtdlp(url)
+      // yt-dlp → cobalt fallback (Railway IP sering di-block IG)
+      const result = await downloadWithFallback(url, 'instagram')
+      filePath = result.filePath
+      console.log(`[igdl] downloaded via ${result.source}`)
 
       // Size check (WA limit ~64MB)
       const sizeMB = fs.statSync(filePath).size / 1024 / 1024
@@ -272,7 +354,10 @@ export async function handleDownload(sock, msg, text, command) {
         // Metadata fetch failed — proceed with default caption
       }
 
-      filePath = await downloadWithYtdlp(url)
+      // yt-dlp → cobalt fallback (FB juga agresif anti-bot)
+      const result = await downloadWithFallback(url, 'facebook')
+      filePath = result.filePath
+      console.log(`[fbdl] downloaded via ${result.source}`)
 
       // Size check (WA limit ~64MB)
       const sizeMB = fs.statSync(filePath).size / 1024 / 1024
