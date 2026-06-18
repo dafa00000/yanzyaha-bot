@@ -18,7 +18,8 @@ import { handleAutoClip } from './handler-autoclip.js'
 // ─── URL PATTERNS ──────────────────────────────────────────────────────────
 const RE = {
   youtube:   /https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)[\w-]{11}/i,
-  tiktok:    /https?:\/\/(?:www\.|vm\.)?tiktok\.com\/[\w@/?=&-]+/i,
+  // TikTok — semua subdomain (www, vm, vt, m) plus bare domain
+  tiktok:    /https?:\/\/(?:[\w-]+\.)?tiktok\.com\/[\w@/?=&-]+/i,
   twitter:   /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[\w]+\/status\/\d+/i,
   pinterest: /https?:\/\/(?:www\.|pin\.)?(?:pinterest\.com\/[\w/?=&-]+|pinterest\.com\/pin\/[\w/?=&-]+|pin\.it\/[\w]+)/i,
   // Instagram: reels, posts (with video), tv — shortcodes are alphanumeric 8-15 chars

@@ -16,6 +16,10 @@ const cases = [
   ['https://www.youtube.com/watch?v=dQw4w9WgXcQ', false, 'download', 'youtube'],
   ['https://vm.tiktok.com/ZS2xYzAbCd/',           false, 'download', 'tiktok'],
   ['https://www.tiktok.com/@user/video/123456',   false, 'download', 'tiktok'],
+  // vt.tiktok.com (vanity short URL) — bug fix after user report
+  ['https://vt.tiktok.com/ZSQG7JEnr/',            false, 'download', 'tiktok'],
+  ['https://m.tiktok.com/v/123456',               false, 'download', 'tiktok'],
+  ['https://tiktok.com/@user/video/123456',       false, 'download', 'tiktok'],
   ['https://x.com/elonmusk/status/1234567890',    false, 'download', 'twitter'],
   ['https://twitter.com/foo/status/123',          false, 'download', 'twitter'],
   ['https://pin.it/abc123',                       false, 'download', 'pinterest'],
