@@ -236,6 +236,7 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     // Detect URL di pesan TANPA prefix command.
     // - Private: trigger kalau body ada URL
     // - Group  : trigger cuma kalau message essentially cuma URL
+    // - Supported: YouTube, TikTok, Twitter/X, Pinterest, Instagram (reel/reels/p/tv)
     // - Differentiator:
     //     plain URL              → full download
     //     "clip <url> <s> <e>"   → manual clip
@@ -437,6 +438,7 @@ case 'ttdl':
 case 'twdl':
 case 'xdl':
 case 'pindl':
+case 'igdl':
 case 'clip':
 case 'dl':
 case 'download':

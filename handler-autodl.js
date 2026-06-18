@@ -2,13 +2,13 @@
 // Auto-detect URL di pesan TANPA prefix.
 // User tinggal kirim link → bot auto download.
 // Differentiator:
-//   - Plain URL              → full download (YT/TT/X/Pinterest)
+//   - Plain URL              → full download (YT/TT/X/Pinterest/Instagram)
 //   - "clip <url> <start> <end>" → manual clip (reuse handler-download clip)
 //   - "auto <url>"           → AI-powered autoclip (handler-autoclip)
 //   - "MM:SS <url>"          → clip 60 detik mulai dari MM:SS
 //
 // Catatan:
-//   • Prefix commands (`.ytdl`, `.ttdl`, dll) tetap jalan — autodl cuma nambah.
+//   • Prefix commands (`.ytdl`, `.ttdl`, `.igdl`, dll) tetap jalan — autodl cuma nambah.
 //   • Di private chat: trigger kalau ada URL di body.
 //   • Di group: trigger cuma kalau message starts-with URL / keyword (biar gak nabrak chat normal).
 
@@ -21,6 +21,8 @@ const RE = {
   tiktok:    /https?:\/\/(?:www\.|vm\.)?tiktok\.com\/[\w@/?=&-]+/i,
   twitter:   /https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[\w]+\/status\/\d+/i,
   pinterest: /https?:\/\/(?:www\.|pin\.)?(?:pinterest\.com\/[\w/?=&-]+|pinterest\.com\/pin\/[\w/?=&-]+|pin\.it\/[\w]+)/i,
+  // Instagram: reels, posts (with video), tv — shortcodes are alphanumeric 8-15 chars
+  instagram: /https?:\/\/(?:www\.)?instagram\.com\/(?:reel|reels|p|tv)\/[\w-]+\/?/i,
   anyUrl:    /https?:\/\/\S+/i,
 
   // Timestamp prefix: "0:42 <url>" or "1:23:45 <url>"
@@ -88,6 +90,7 @@ export function detectAction(body, isGroup = false) {
   else if (RE.tiktok.test(url)) platform = 'tiktok'
   else if (RE.twitter.test(url)) platform = 'twitter'
   else if (RE.pinterest.test(url)) platform = 'pinterest'
+  else if (RE.instagram.test(url)) platform = 'instagram'
   if (!platform) return null
 
   // Di group: cuma respond kalau message "essentially" cuma URL (atau starts-with URL)
@@ -107,6 +110,7 @@ const CMD_MAP = {
   tiktok:    'ttdl',
   twitter:   'twdl',
   pinterest: 'pindl',
+  instagram: 'igdl',
 }
 
 /**

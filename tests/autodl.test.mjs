@@ -21,6 +21,14 @@ const cases = [
   ['https://pin.it/abc123',                       false, 'download', 'pinterest'],
   ['https://www.pinterest.com/pin/123/',          false, 'download', 'pinterest'],
 
+  // Instagram — Reels, Posts (video), TV
+  ['https://www.instagram.com/reel/DYAaNhJjwpy/', false, 'download', 'instagram'],
+  ['https://www.instagram.com/reels/DYAaNhJjwpy/?igsh=ZWJsbDImd2IwZXFp', false, 'download', 'instagram'],
+  ['https://instagram.com/p/CXYZabc123/',         false, 'download', 'instagram'],
+  ['https://www.instagram.com/tv/ABC1234567/',    false, 'download', 'instagram'],
+  // IG image posts (no /reel/, /p/, /tv/) — should NOT trigger download
+  ['https://www.instagram.com/username/',         false, null],
+
   // Timestamp prefix
   ['0:42 https://youtu.be/dQw4w9WgXcQ',            false, 'tsClip'],
   ['1:23:45 https://www.youtube.com/watch?v=dQw4w9WgXcQ', false, 'tsClip'],

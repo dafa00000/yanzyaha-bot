@@ -20,6 +20,7 @@ Bot WhatsApp dengan berbagai fitur, dibuat menggunakan [@whiskeysockets/baileys]
 | `.ytdl [link]` | Download video YouTube (maks 10 menit) |
 | `.ytmp3 [link]` | Download audio YouTube |
 | `.ttdl [link]` | Download video TikTok (tanpa watermark) |
+| `.igdl [link]` | Download Instagram Reel/Post/TV |
 | `.clip [link] [mulai] [akhir]` | Clip YouTube (range waktu) |
 
 ### ⚡ Auto-Download (Tanpa Prefix)
@@ -31,6 +32,8 @@ Kirim link langsung — bot auto-download. Bisa juga pake keyword untuk mode khu
 | `https://vm.tiktok.com/xxx` | Download TikTok (no watermark) |
 | `https://x.com/user/status/123` | Download video Twitter/X |
 | `https://pin.it/xxx` | Download Pinterest |
+| `https://www.instagram.com/reel/xxx` | Download Instagram Reel |
+| `https://www.instagram.com/p/xxx` | Download Instagram Post (kalau video) |
 | `0:42 https://youtu.be/xxx` | Clip 60 detik mulai dari 0:42 |
 | `1:30:00 https://youtu.be/xxx` | Clip 60 detik mulai dari 1j 30m |
 | `clip https://youtu.be/xxx 01:30 02:45` | Clip range waktu spesifik |
