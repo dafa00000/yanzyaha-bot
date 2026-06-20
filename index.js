@@ -45,10 +45,14 @@ import { handleAutoDownload } from './handler-autodl.js'
 const require = createRequire(import.meta.url)
 const fileManager = require('./file-manager.cjs')
 const aiUpdate = require('./handler-ai-update.cjs')
+const hermesHandler = require('./handler-hermes.cjs')
+const configHandler = require('./handler-config.cjs')
 const botConfig = require('./config.cjs')
 
+// Load runtime config overrides dari $HERMES_HOME/config.json
+configHandler.loadConfig()
+
 const PREFIX = '.'
-const chatHistory = new Map()
 let isReconnecting = false
 const OWNER = '62895618805248'
 const OWNER_LIDS = ['62895618805248', '83807763972304', '110857451221063']
@@ -248,68 +252,12 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     }
     // ================== END AUTO-DOWNLOAD ==================
 
-    // ================== AI CHAT REALISTIS (Tanpa Perlu .ai) ==================
+    // ================== AI CHAT (Hermes Agent) ==================
+    // Chat bebas di private chat → spawn Hermes subprocess.
+    // Memory per-user via --resume session (persist di $HERMES_HOME).
     if (body && !body.startsWith(PREFIX)) {
       if (isGroup) return
-
-      const today = new Date().toISOString().slice(0, 10)
-      if (!chatHistory.has(sender)) chatHistory.set(sender, { messages: [], date: today, count: 0 })
-      const userData = chatHistory.get(sender)
-
-      if (userData.date !== today) {
-        userData.messages = []
-        userData.count = 0
-        userData.date = today
-      }
-
-      const DAILY_LIMIT = 100
-      if (userData.count >= DAILY_LIMIT) {
-        await sendText('⚠️ Limit chat harian kamu sudah habis (100 pesan). Coba lagi besok ya! 😊')
-        return
-      }
-
-      if (body.trim().toLowerCase() === '.reset' || body.trim().toLowerCase() === 'reset') {
-        userData.messages = []
-        userData.count = 0
-        await sendText('🔄 Percakapan direset! Kita mulai dari awal ya 😊')
-        return
-      }
-
-      await sendText('🤖 Sedang berpikir...')
-
-      try {
-        const OpenAI = (await import('openai')).default
-        const groq = new OpenAI({
-          apiKey: process.env.GROQ_API_KEY,
-          baseURL: 'https://api.groq.com/openai/v1'
-        })
-
-        userData.messages.push({ role: 'user', content: body })
-        userData.count++
-
-        if (userData.messages.length > 100) userData.messages = userData.messages.slice(-100)
-
-        const response = await groq.chat.completions.create({
-          model: 'llama-3.3-70b-versatile',
-          messages: [
-            {
-              role: 'system',
-              content: 'Kamu adalah teman yang asik, ramah, santai, dan sedikit humoris. Jawab pakai bahasa Indonesia se-natural mungkin seperti orang biasa ngobrol. Ingat konteks percakapan sebelumnya.'
-            },
-            ...userData.messages
-          ],
-          temperature: 0.85,
-          max_tokens: 700
-        })
-
-        const aiReply = response.choices[0]?.message?.content || 'Maaf, aku lagi blank nih.'
-        userData.messages.push({ role: 'assistant', content: aiReply })
-        await sendText(aiReply)
-
-      } catch (err) {
-        console.error('[GROQ ERROR]', err.message)
-        await sendText('❌ Lagi sibuk nih, coba beberapa saat lagi ya 😊')
-      }
+      await hermesHandler.handleChat(sock, msg, body, sender)
       return
     }
     // ================== END AI CHAT ==================
@@ -365,7 +313,7 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
             `│ 📦 *Versi   :* 2.1.0           │\n` +
             `╰────────────────────────╯\n\n` +
             `_Powered by YANZYAHA-BOT_ ⚡` +
-            `_SUPPORT by CLAUDE AI FT GROQ AI_ ⚡`
+            `_AI Powered by Hermes Agent_ 🧠`
           )
           break
         case 'owner':
@@ -508,44 +456,28 @@ case 'download':
           if (!text) return sendText(`❌ Contoh: ${PREFIX}teks Halo Dunia`)
           await sendText(text)
           break
-                // ==================== AI GROQ (Gratis & Cepat) ====================
+                // ==================== AI HERMES (via Hermes Agent) ====================
         case 'ai':
         case 'grok': {
-          if (!text) {
-            return sendText('⚠️ Masukkan pertanyaan!\nContoh: `.ai halo apa kabar?`');
-          }
+          await hermesHandler.handleCommand(sock, msg, text)
+          break
+        }
 
-          await sendText('🤖 Groq sedang berpikir...');
-
-          try {
-            const OpenAI = (await import('openai')).default;
-            const groq = new OpenAI({
-              apiKey: process.env.GROQ_API_KEY,
-              baseURL: "https://api.groq.com/openai/v1"
-            });
-
-            const response = await groq.chat.completions.create({
-              model: "llama-3.3-70b-versatile",     // Model bagus & cepat
-              // model: "mixtral-8x7b-32768",       // Alternatif
-              messages: [
-                { 
-                  role: "system", 
-                  content: "Kamu adalah asisten AI yang ramah, santai, lucu, dan super membantu. Jawab dalam bahasa Indonesia yang natural." 
-                },
-                { role: "user", content: text }
-              ],
-              temperature: 0.8,
-              max_tokens: 800
-            });
-
-            const aiReply = response.choices[0]?.message?.content || "Maaf, aku bingung nih.";
-            await sendText(aiReply);
-
-          } catch (err) {
-            console.error('[GROQ ERROR]', err.message);
-            await sendText("❌ Groq lagi sibuk. Coba lagi bentar ya 😊");
-          }
-          break;
+        // ==================== CONFIG (Owner Only) ====================
+        case 'setapikey':
+        case 'setkey':
+        case 'setbaseurl':
+        case 'seturl':
+        case 'setmodel':
+        case 'settimeout':
+        case 'setlimit':
+        case 'setdaily':
+        case 'showconfig':
+        case 'cfg':
+        case 'resetconfig':
+        case 'cfgreset': {
+          await configHandler.handle(sock, msg, body, sender)
+          break
         }
 
 

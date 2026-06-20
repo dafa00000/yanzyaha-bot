@@ -11,11 +11,21 @@ export function getMenuText(sender) {
 │ ⌬ .owner   » Kontak owner
 ╰────────────────
 
-╭─「 🤖 AI CHAT 」
+╭─「 🤖 AI CHAT (Hermes Agent) 」
 │ ⌬ .ai [tanya]  » Tanya AI
 │ ⌬ .reset       » Reset percakapan
 │ ◇ Chat biasa = auto AI reply
-│ ◇ Limit 100 pesan/hari
+│ ◇ Per-user memory (Hermes session)
+╰────────────────
+
+╭─「 ⚙️ CONFIG (Owner Only) 」
+│ ⌬ .setapikey <key>      » Set API key
+│ ⌬ .setbaseurl <url>     » Set base URL
+│ ⌬ .setmodel <model>     » Set model
+│ ⌬ .settimeout <ms>      » Subprocess timeout
+│ ⌬ .setlimit <n>         » Daily limit (0=∞)
+│ ⌬ .showconfig           » Lihat config
+│ ⌬ .resetconfig          » Reset ke env
 ╰────────────────
 
 ╭─「 📥 DOWNLOAD 」
