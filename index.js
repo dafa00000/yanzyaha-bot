@@ -16,6 +16,7 @@ import { checkMLProfile, formatMLProfile } from './ml-profile.js'
 import { handleSosmed } from './handler-sosmed.js'
 import { handleDownload } from './handler-download.js'
 import { getMenuText } from './menu.js'
+const { isCommandAllowed, isRestrictedGroup, getAllowedCommands } = require('./restrictions.cjs')
 import { handleSearch } from './handler-search.js'
 import { handleMenfess } from './handler-menfess.js'
 import { handleCrypto } from './handler-crypto.js'
@@ -284,6 +285,18 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     const args = body.slice(PREFIX.length).trim().split(/\s+/)
     const command = args[0]?.toLowerCase()
     const text = args.slice(1).join(' ')
+
+    // Group restriction check: if this group is restricted and command is not in allowlist, block.
+    if (isGroup && command && !isCommandAllowed(from, command)) {
+      const allowed = getAllowedCommands(from) || []
+      await sendText(
+        `🔒 *Command \`.${command}\` ga tersedia di grup ini.*\n\n` +
+        `Grup ini di-restrict. Command yang diizinkan: \`${allowed.join(', ')}\`\n` +
+        `Cek \`.menu\` buat liat menu yang tersedia.`
+      )
+      return
+    }
+
     // Log: distinguish group vs private + show full JID (not just numeric prefix)
     const jidType = isGroup ? 'GROUP' : 'PRIVATE'
     const fromDisplay = isGroup
