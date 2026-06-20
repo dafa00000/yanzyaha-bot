@@ -39,14 +39,16 @@ RUN npm install --omit=dev
 # Copy app source
 COPY . .
 
-# Persistent dirs
-RUN mkdir -p /tmp/wa-tmp /opt/data && chmod 777 /tmp/wa-tmp
+# Persistent dirs (chmod 777 karena Hermes base image jalanin service sebagai non-root user)
+RUN mkdir -p /tmp/wa-tmp /opt/data /app/auth && \
+    chmod 777 /tmp/wa-tmp /opt/data /app && \
+    chmod 777 /app/auth 2>/dev/null || true
 
 ENV TZ=Asia/Jakarta
 
 # CMD: optional yt-dlp update + jalanin WA bot
 # Hermes dipanggil sebagai subprocess dari handler-hermes.cjs
-CMD ["sh", "-c", "if [ \"$UPDATE_YT_DLP\" = \"1\" ]; then echo '[start] Updating yt-dlp...'; yt-dlp -U 2>&1 || echo '[start] yt-dlp update failed (non-fatal)'; fi; mkdir -p /tmp/wa-tmp /opt/data; chmod 777 /tmp/wa-tmp 2>/dev/null || true; echo '[start] Launching yanzyaha-bot with Hermes Agent...'; exec node index.js"]
+CMD ["sh", "-c", "if [ \"$UPDATE_YT_DLP\" = \"1\" ]; then echo '[start] Updating yt-dlp...'; yt-dlp -U 2>&1 || echo '[start] yt-dlp update failed (non-fatal)'; fi; mkdir -p /tmp/wa-tmp /opt/data \"${HERMES_HOME:-/opt/data}/auth\" 2>/dev/null || true; chmod -R 777 /opt/data 2>/dev/null || true; echo '[start] Launching yanzyaha-bot with Hermes Agent...'; exec node index.js"]
 
 # Note: Untuk Railway volume mount, set HERMES_HOME=/opt/data di env vars
 # Supaya session/memory persistent across deploys

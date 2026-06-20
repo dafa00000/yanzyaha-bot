@@ -9,6 +9,7 @@ import pino from 'pino'
 import readline from 'readline'
 import { createRequire } from 'module'
 import fs from 'fs'
+import path from 'path'
 
 import 'dotenv/config'
 import { checkMLProfile, formatMLProfile } from './ml-profile.js'
@@ -66,7 +67,14 @@ function tanya(pertanyaan) {
 }
 
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('./auth')
+  // Auth path: $HERMES_HOME/auth (persistent volume di Railway).
+  // Fallback ke ./auth kalo ga di-set (untuk dev lokal).
+  const authPath = process.env.HERMES_HOME
+    ? path.join(process.env.HERMES_HOME, 'auth')
+    : './auth'
+  // eslint-disable-next-line no-console
+  console.log(`[auth] Using auth dir: ${authPath}`)
+  const { state, saveCreds } = await useMultiFileAuthState(authPath)
   const { version } = await fetchLatestBaileysVersion()
 
   const sock = makeWASocket({
