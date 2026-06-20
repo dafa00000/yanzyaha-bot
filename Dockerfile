@@ -29,6 +29,21 @@ RUN if command -v pip3 >/dev/null 2>&1; then \
     fi \
     && yt-dlp --version
 
+# Install Deno — JS runtime untuk yt-dlp (YouTube butuh JS extraction
+# sejak 2024; tanpa runtime → 403 Forbidden)
+RUN if command -v apk >/dev/null 2>&1; then \
+      apk add --no-cache deno; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+      apt-get update && \
+      apt-get install -y --no-install-recommends curl unzip && \
+      curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- -y && \
+      ln -sf /usr/local/bin/deno /usr/bin/deno && \
+      rm -rf /var/lib/apt/lists/*; \
+    else \
+      echo "WARN: no apk or apt-get for deno install (yt-dlp JS extraction may fail)"; \
+    fi \
+    && deno --version || echo "deno not available"
+
 # Tentukan working dir
 WORKDIR /app
 

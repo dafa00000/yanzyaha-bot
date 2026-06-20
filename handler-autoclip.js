@@ -41,7 +41,12 @@ const execAsync = promisify(exec)
 const TMP_DIR = process.env.WA_TMP_DIR || (
   process.env.PREFIX?.includes('com.termux') ? '/sdcard/wa-tmp' : '/tmp/wa-tmp'
 )
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
+// Try multiple env var names for backward compat with Railway configs
+// that use either GEMINI_API_KEY or GEMINI_KEY
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GEMINI_KEY || ''
+if (!GEMINI_API_KEY) {
+  console.warn('[AUTOCLIP] ⚠️  GEMINI_API_KEY / GEMINI_KEY belum di-set. Set di Railway Variables.')
+}
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
 const TG_CHANNEL = 'https://t.me/yanzyahabotc'
 
@@ -50,7 +55,7 @@ function cleanTmp(f) { try { fs.unlinkSync(f) } catch {} }
 
 async function getVideoDuration(url) {
   try {
-    const { stdout } = await execAsync('yt-dlp --get-duration --no-playlist "' + url + '"', { timeout: 30000 })
+    const { stdout } = await execAsync('yt-dlp --js-runtimes deno --get-duration --no-playlist "' + url + '"', { timeout: 30000 })
     const raw = stdout.trim()
     const parts = raw.split(':').map(Number)
     if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2]
@@ -195,7 +200,7 @@ export async function handleAutoClip(sock, msg, url) {
   try {
     await sendText('⏳ Mengunduh video...')
     await execAsync(
-      'yt-dlp -f "bestvideo[vcodec^=avc1][height<=480]+bestaudio[ext=m4a]" --merge-output-format mp4 --no-playlist -o "' + rawFile + '" "' + url + '"',
+      'yt-dlp --js-runtimes deno -f "bestvideo[vcodec^=avc1][height<=480]+bestaudio[ext=m4a]" --merge-output-format mp4 --no-playlist -o "' + rawFile + '" "' + url + '"',
       { timeout: 1800000 }
     )
     if (!fs.existsSync(rawFile)) throw new Error('File tidak ditemukan setelah download')

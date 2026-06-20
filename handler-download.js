@@ -46,7 +46,7 @@ async function downloadWithYtdlp(url, audioOnly = false, platformHint = '') {
   // Cookies: user can provide IG/FB session cookies via env var
   // (Railway IP blocked from IG/FB; cookies from real browser = trusted IP)
   const cookiesArg = buildYtdlpCookiesArg(platformHint)
-  await execAsync(`yt-dlp ${format} --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`, { timeout: 120000 })
+  await execAsync(`yt-dlp --js-runtimes deno ${format} --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`, { timeout: 120000 })
   return filePath
 }
 
