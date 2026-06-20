@@ -13,6 +13,12 @@
  */
 
 const { spawn } = require('child_process')
+const fsp = require('fs').promises
+const path = require('path')
+
+// History directory: $HERMES_HOME/sessions/wa-{sender}/history.json
+const HISTORY_DIR = path.join(process.env.HERMES_HOME || '/opt/data', 'sessions')
+const HISTORY_MAX = 50
 
 // ─── CONFIG ───────────────────────────────────────────────────
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
@@ -236,18 +242,99 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
     return handleReset(sock, msg, sender)
   }
 
-  await replyWa(sock, msg, '🤖 *Hermes thinking...*')
+  await replyWa(sock, msg, '🤖 *thinking...*')
 
   try {
-    const sessionId = senderToSession(sender)
-    const ans = await runHermes(body, { resume: sessionId, userEnv, _sender: sender })
+    const ans = await directChat(body, { userEnv, _sender: sender })
     await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
   } catch (e) {
     console.error('[HERMES ERROR]', e.message)
-    await replyWa(sock, msg, `❌ ${e.message}`)
+    await replyWa(sock, msg, `\u274c ${e.message}`)
   }
 }
 
+// ---- DIRECT API CHAT (OpenAI-compatible) ----
+// Bypasses Hermes CLI - works reliably with per-user config.
+// .ai command still uses Hermes CLI for full tools/skills.
+
+async function loadHistory(sender) {
+  const sessionId = senderToSession(sender)
+  const file = path.join(HISTORY_DIR, sessionId, 'history.json')
+  try {
+    const raw = await fsp.readFile(file, 'utf8')
+    const data = JSON.parse(raw)
+    return Array.isArray(data.messages) ? data.messages : []
+  } catch {
+    return []
+  }
+}
+
+async function saveHistory(sender, messages) {
+  const sessionId = senderToSession(sender)
+  const file = path.join(HISTORY_DIR, sessionId, 'history.json')
+  await fsp.mkdir(path.dirname(file), { recursive: true })
+  const trimmed = messages.slice(-HISTORY_MAX)
+  await fsp.writeFile(file, JSON.stringify({ messages: trimmed, updated: Date.now() }, null, 2))
+}
+
+async function directChat(prompt, opts = {}) {
+  const baseUrl = (opts.userEnv && opts.userEnv.OPENAI_BASE_URL) || process.env.OPENAI_BASE_URL || 'https://api.tokenrouter.com/v1'
+  const apiKey = (opts.userEnv && opts.userEnv.OPENAI_API_KEY) || process.env.OPENAI_API_KEY
+  const model = (opts.userEnv && opts.userEnv.HERMES_MODEL) || opts.model || process.env.HERMES_MODEL || 'MiniMax-M3'
+
+  if (!apiKey) {
+    throw new Error('🔑 OPENAI_API_KEY belum di-set.\\n\\nSet di Railway Variables atau `.setapikey <key>`')
+  }
+
+  const url = baseUrl.replace(/\\/+$, '') + '/chat/completions'
+
+  const messages = await loadHistory(opts._sender)
+  messages.push({ role: 'user', content: prompt })
+
+  console.log('[DIRECT-CHAT] sender=' + (opts._sender || '?') + ' model=' + model + ' url=' + url)
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs || TIMEOUT_MS)
+
+  let res
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model: model, messages: messages, stream: false }),
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '')
+    let msg = 'HTTP ' + res.status + ' dari ' + url + '\\n' + errText.slice(0, 300)
+    if (res.status === 401) {
+      msg = '🔑 API key invalid / 401.\\n\\nDetail: ' + errText.slice(0, 200) + '\\n\\n*Cara fix:*\\n' +
+            '1. `.myconfig` - cek key\\n' +
+            '2. `.apitest` - diagnostic\\n' +
+            '3. `.setapikey <key>` - set key baru'
+    } else if (res.status === 404) {
+      msg = '🔑 Model `' + model + '` not found.\\n\\nCek `.models` atau `.setmodel <name>`.'
+    } else if (res.status === 429) {
+      msg = '⏳ Rate limit.\\n\\nTunggu atau ganti API key.'
+    }
+    throw new Error(msg)
+  }
+
+  const data = await res.json().catch(() => ({}))
+  const reply = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '(empty response)'
+
+  messages.push({ role: 'assistant', content: reply })
+  await saveHistory(opts._sender, messages)
+
+  return reply
+}
 // ─── HANDLE: explicit .ai / .grok command ────────────────────
 async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
   if (!text || !text.trim()) {
@@ -274,6 +361,10 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
 async function handleReset(sock, msg, sender) {
   // Hapus daily counter
   dailyCount.delete(sender)
+  // Hapus history file (directChat memory)
+  const sessionId = senderToSession(sender)
+  const historyFile = path.join(HISTORY_DIR, sessionId, 'history.json')
+  try { await fsp.unlink(historyFile) } catch (_) {}
   await replyWa(
     sock,
     msg,
@@ -287,5 +378,6 @@ module.exports = {
   handleCommand,
   handleReset,
   runHermes, // exported for testing
+  directChat, // exported for testing
   senderToSession,
 }
