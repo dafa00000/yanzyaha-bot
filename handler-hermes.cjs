@@ -20,6 +20,9 @@ const path = require('path')
 const HISTORY_DIR = path.join(process.env.HERMES_HOME || '/opt/data', 'sessions')
 const HISTORY_MAX = 50
 
+// System prompt — bikin AI jawab langsung tanpa basa-basi
+const SYSTEM_PROMPT = `You are a casual WhatsApp assistant. Reply briefly in Indonesian/English mix. NO greetings, NO self-introduction, NO "ada yang bisa saya bantu". Just answer directly. Use markdown when useful (bold, lists, code). Keep it under 1500 chars unless user asks for more.`
+
 // ─── CONFIG ───────────────────────────────────────────────────
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
 const TIMEOUT_MS = parseInt(process.env.HERMES_TIMEOUT_MS || '120000', 10)
@@ -223,6 +226,21 @@ async function replyWa(sock, msg, text) {
   return sock.sendMessage(msg.key.remoteJid, { text }, { quoted: msg })
 }
 
+// Typing indicator helper - show "sedang mengetik..." during AI processing.
+// Re-send composing every 3s because WA drops the indicator otherwise.
+async function startTyping(sock, jid) {
+  try { await sock.sendPresenceUpdate('composing', jid) } catch (_) {}
+  const interval = setInterval(() => {
+    sock.sendPresenceUpdate('composing', jid).catch(() => {})
+  }, 3000)
+  return interval
+}
+
+function stopTyping(interval, sock, jid) {
+  if (interval) clearInterval(interval)
+  try { sock.sendPresenceUpdate('paused', jid) } catch (_) {}
+}
+
 // ─── HANDLE: chat bebas (no prefix, private) ─────────────────
 async function handleChat(sock, msg, body, sender, userEnv = null) {
   // Optional daily limit (per-user)
@@ -242,12 +260,16 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
     return handleReset(sock, msg, sender)
   }
 
-  await replyWa(sock, msg, '🤖 *thinking...*')
+  // Show typing indicator (re-send every 3s to keep alive)
+  const jid = msg.key.remoteJid
+  const typing = await startTyping(sock, jid)
 
   try {
     const ans = await directChat(body, { userEnv, _sender: sender })
+    stopTyping(typing, sock, jid)
     await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
   } catch (e) {
+    stopTyping(typing, sock, jid)
     console.error('[HERMES ERROR]', e.message)
     await replyWa(sock, msg, `\u274c ${e.message}`)
   }
@@ -291,6 +313,10 @@ async function directChat(prompt, opts = {}) {
   const url = cleanBase + '/chat/completions'
 
   const messages = await loadHistory(opts._sender)
+  // Inject system prompt di awal (sekali per session)
+  if (!messages.find(m => m.role === 'system')) {
+    messages.unshift({ role: 'system', content: SYSTEM_PROMPT })
+  }
   messages.push({ role: 'user', content: prompt })
 
   console.log('[DIRECT-CHAT] sender=' + (opts._sender || '?') + ' model=' + model + ' url=' + url)
@@ -347,13 +373,17 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
     )
   }
 
-  await replyWa(sock, msg, '🤖 *Hermes thinking...*')
+  // Typing indicator
+  const jid = msg.key.remoteJid
+  const typing = await startTyping(sock, jid)
 
   try {
     // .ai command = single-shot, no session (biar ga nyampur context)
     const ans = await runHermes(text.trim(), { userEnv, _sender: sender })
+    stopTyping(typing, sock, jid)
     await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
   } catch (e) {
+    stopTyping(typing, sock, jid)
     console.error('[HERMES ERROR]', e.message)
     await replyWa(sock, msg, `❌ ${e.message}`)
   }
