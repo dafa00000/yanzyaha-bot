@@ -6,21 +6,27 @@ FROM nousresearch/hermes-agent:latest
 
 ENV HERMES_HOME=/opt/data
 
-# Install Node.js + ffmpeg (untuk video clipping)
-# Base image mungkin Alpine (apk) atau Debian (apt) — handle dua-duanya
+# Install Node.js + ffmpeg + python3-pip (untuk yt-dlp install)
+# Base image punya Python tapi pip binary-nya belum ke-install
 RUN if command -v apk >/dev/null 2>&1; then \
-      apk add --no-cache nodejs npm ffmpeg tzdata git curl ca-certificates; \
+      apk add --no-cache nodejs npm ffmpeg tzdata git curl ca-certificates py3-pip; \
     elif command -v apt-get >/dev/null 2>&1; then \
       apt-get update && \
       apt-get install -y --no-install-recommends \
-        nodejs npm ffmpeg tzdata git curl ca-certificates && \
+        python3-pip nodejs npm ffmpeg tzdata git curl ca-certificates && \
       rm -rf /var/lib/apt/lists/*; \
     else \
       echo "ERROR: no apk or apt-get found"; exit 1; \
     fi
 
-# Install yt-dlp (pake pip3 dari base image)
-RUN pip3 install --no-cache-dir --break-system-packages yt-dlp \
+# Install yt-dlp — coba pip3, fallback ke python3 -m pip (lebih portable)
+RUN if command -v pip3 >/dev/null 2>&1; then \
+      pip3 install --no-cache-dir --break-system-packages yt-dlp; \
+    elif command -v python3 >/dev/null 2>&1; then \
+      python3 -m pip install --no-cache-dir --break-system-packages yt-dlp; \
+    else \
+      echo "ERROR: no pip available for yt-dlp"; exit 1; \
+    fi \
     && yt-dlp --version
 
 # Tentukan working dir
