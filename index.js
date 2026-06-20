@@ -199,6 +199,11 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     const senderNomor = sender ? sender.replace(/@(lid|s\.whatsapp\.net)$/, '') : '';
     saveUser(sender, senderNomor);
 
+    // Log group JID (if applicable) — was missing before, caused confusion
+    if (isGroup) {
+      console.log('[GROUP JID]', from, '| sender=', sender, '| members via metadata on demand');
+    }
+
     // Catat user
 
     // Cek banned

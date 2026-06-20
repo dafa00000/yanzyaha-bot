@@ -184,23 +184,73 @@ async function analyzeWithOpenAI(segments, maxSec) {
   return parseAndSnapSegments(text, segments, maxSec)
 }
 
+// ─── OPENROUTER (free models: Llama 3.3 70B, DeepSeek V3, Qwen 2.5 72B) ──────
+// OpenRouter offers free tier for many models. Get key at https://openrouter.ai
+// Set OPENROUTER_API_KEY + (optional) OPENROUTER_MODEL
+async function analyzeWithOpenRouter(segments, maxSec) {
+  const apiKey = process.env.OPENROUTER_API_KEY
+  if (!apiKey) throw new Error('OPENROUTER_API_KEY belum di-set. Daftar di https://openrouter.ai')
+
+  const model = process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct:free'
+  const prompt = buildViralPrompt(segments, maxSec, 'openrouter')
+
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + apiKey,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://yanzyaha-bot.railway.app',
+      'X-Title': 'yanzyaha-bot autoclip',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: 'Kamu adalah editor konten viral Indonesia. Output HANYA JSON valid.' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 2048,
+      // Some free models don't support json_object; we parse anyway
+    }),
+  })
+  if (!res.ok) throw new Error('OpenRouter HTTP ' + res.status + ': ' + (await res.text()).slice(0, 200))
+  const data = await res.json()
+  const text = (data.choices?.[0]?.message?.content || '').replace(/```json|```/g, '').trim()
+  return parseAndSnapSegments(text, segments, maxSec)
+}
+
 // ─── DISPATCHER: pilih LLM terbaik yang available ──────────────────────────
-// Priority: ANTHROPIC > OPENAI > GEMINI (Claude paling jago creative judgment)
-async function analyzeWithLLM(segments, maxSec) {
-  const used = []
+// Priority: ANTHROPIC > OPENAI > OPENROUTER > GEMINI (Claude paling jago creative judgment)
+// Free tier friendly: kalau ga ada paid key, fallback ke OpenRouter free → Gemini free
+async function analyzeWithLLM(segments, maxSec, opts = {}) {
+  // If user specified LLM via .autoclip --llm=xxx, honor it
+  const forced = opts.llm || process.env.AUTOCLIP_LLM
+  if (forced) {
+    console.log('[AUTOCLIP] Forced LLM: ' + forced)
+    if (forced === 'claude') return { ...(await analyzeWithClaude(segments, maxSec)), provider: 'claude' }
+    if (forced === 'openai') return { ...(await analyzeWithOpenAI(segments, maxSec)), provider: 'openai' }
+    if (forced === 'openrouter') return { ...(await analyzeWithOpenRouter(segments, maxSec)), provider: 'openrouter' }
+    if (forced === 'gemini') return { ...(await analyzeWithGemini(segments, maxSec)), provider: 'gemini' }
+    throw new Error('Unknown LLM: ' + forced)
+  }
+  // Auto-fallback priority
   if (process.env.ANTHROPIC_API_KEY) {
-    try { const r = await analyzeWithClaude(segments, maxSec); used.push('claude'); return { ...r, provider: 'claude' } }
+    try { const r = await analyzeWithClaude(segments, maxSec); return { ...r, provider: 'claude' } }
     catch (e) { console.error('[AUTOCLIP] Claude fail:', e.message) }
   }
   if (process.env.OPENAI_API_KEY) {
-    try { const r = await analyzeWithOpenAI(segments, maxSec); used.push('openai'); return { ...r, provider: 'openai' } }
+    try { const r = await analyzeWithOpenAI(segments, maxSec); return { ...r, provider: 'openai' } }
     catch (e) { console.error('[AUTOCLIP] OpenAI fail:', e.message) }
   }
+  if (process.env.OPENROUTER_API_KEY) {
+    try { const r = await analyzeWithOpenRouter(segments, maxSec); return { ...r, provider: 'openrouter' } }
+    catch (e) { console.error('[AUTOCLIP] OpenRouter fail:', e.message) }
+  }
   if (GEMINI_API_KEY) {
-    try { const r = await analyzeWithGemini(segments, maxSec); used.push('gemini'); return { ...r, provider: 'gemini' } }
+    try { const r = await analyzeWithGemini(segments, maxSec); return { ...r, provider: 'gemini' } }
     catch (e) { console.error('[AUTOCLIP] Gemini fail:', e.message) }
   }
-  throw new Error('Tidak ada API key AI yang available. Set salah satu: ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_KEY di Railway.')
+  throw new Error('Tidak ada API key AI yang available. Set salah satu: ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GEMINI_KEY di Railway.')
 }
 
 // ─── PROMPT BUILDER (shared across providers) ───────────────────────────────
@@ -286,8 +336,25 @@ export async function handleAutoClip(sock, msg, url) {
   const from = msg.key.remoteJid
   const sendText = async (t) => await sock.sendMessage(from, { text: t }, { quoted: msg })
 
+  // Parse optional flags: .autoclip <url> [--llm=openrouter|gemini|claude|openai]
+  //   [--whisper]   force Whisper transcription (slower, more accurate sub)
+  //   [--no-sub]    skip subtitle burn-in
+  //   [--max=3]     max clips to generate (default 5)
+  let llmOverride = null
+  let forceWhisper = false
+  let noSub = false
+  let maxClips = 5
+  if (typeof url === 'string') {
+    const llmMatch = url.match(/--llm=(\w+)/)
+    if (llmMatch) { llmOverride = llmMatch[1]; url = url.replace(llmMatch[0], '').trim() }
+    if (url.includes('--whisper')) { forceWhisper = true; url = url.replace('--whisper', '').trim() }
+    if (url.includes('--no-sub')) { noSub = true; url = url.replace('--no-sub', '').trim() }
+    const maxMatch = url.match(/--max=(\d+)/)
+    if (maxMatch) { maxClips = Math.min(parseInt(maxMatch[1]), 10); url = url.replace(maxMatch[0], '').trim() }
+  }
+
   if (!url || (!url.includes('youtube.com') && !url.includes('youtu.be'))) {
-    return sendText('⚠️ Format salah!\n\n.autoclip [link YouTube]')
+    return sendText('⚠️ Format salah!\n\n.autoclip [link YouTube] [--llm=openrouter|gemini] [--whisper] [--no-sub] [--max=3]\n\nContoh: .autoclip https://youtu.be/xxx --llm=openrouter --max=3')
   }
 
   await sendText('🔍 *Langkah 1/5:* Mengambil durasi & transkrip...')
@@ -307,15 +374,15 @@ export async function handleAutoClip(sock, msg, url) {
     console.log('[AUTOCLIP] YouTube transcript unavailable:', e.message)
   }
 
-  // If YouTube transcript empty/missing → download + Whisper
+  // If YouTube transcript empty/missing OR --whisper flag → use Whisper
   let rawFile = null
-  if (!segments || segments.length < 10) {
-    // Too few segments = likely YouTube auto-subs are bad/missing
-    // Download video first, then Whisper
+  const needWhisper = forceWhisper || !segments || segments.length < 10
+  if (needWhisper) {
+    const reason = forceWhisper ? '--whisper flag' : 'YouTube subtitle kurang/ga ada'
     const ts0 = Date.now()
     rawFile = TMP_DIR + '/' + ts0 + '_whisper_raw.mp4'
     try {
-      await sendText('📥 YouTube subtitle kurang/ga ada. Download + Whisper fallback...')
+      await sendText('📥 ' + reason + '. Download + Whisper fallback...')
       await execAsync(
         'yt-dlp --js-runtimes deno -f "bestvideo[vcodec^=avc1][height<=360]+bestaudio[ext=m4a]/best" --merge-output-format mp4 --no-playlist -o "' + rawFile + '" "' + url + '"',
         { timeout: 1800000 }
@@ -341,7 +408,7 @@ export async function handleAutoClip(sock, msg, url) {
 
   let analysis
   try {
-    analysis = await analyzeWithLLM(segments, maxSec)
+    analysis = await analyzeWithLLM(segments, maxSec, { llm: llmOverride })
   } catch (e) {
     if (rawFile) cleanTmp(rawFile)
     return sendText('❌ Gagal analisis AI: ' + e.message)
@@ -358,7 +425,7 @@ export async function handleAutoClip(sock, msg, url) {
     return sendText('❌ Tidak ada momen viral (semua score < 70). Coba video lain.')
   }
 
-  const top = valid.sort((a, b) => b.score - a.score).slice(0, 5)
+  const top = valid.sort((a, b) => b.score - a.score).slice(0, maxClips)
 
   await sendText(
     '✅ *Langkah 3/5:* ' + top.length + ' momen viral (' + analysis.provider + '):\n\n' +
