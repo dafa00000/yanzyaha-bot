@@ -13,6 +13,7 @@
  */
 
 const { spawn } = require('child_process')
+const sec = require('./security.cjs')
 const fsp = require('fs').promises
 const path = require('path')
 
@@ -272,6 +273,17 @@ function stopTyping(interval, sock, jid) {
 
 // ─── HANDLE: chat bebas (no prefix, private) ─────────────────
 async function handleChat(sock, msg, body, sender, userEnv = null) {
+  // Security: length + jailbreak + extraction (pre-check, before any API call)
+  const sec1 = sec.checkSecurity(body)
+  if (!sec1.ok) {
+    return replyWa(sock, msg, sec1.reason)
+  }
+  // Per-user rate limit (in-memory, 20/hour)
+  const rl = sec.checkRateLimit(sender)
+  if (!rl.ok) {
+    return replyWa(sock, msg, rl.reason)
+  }
+
   // Optional daily limit (per-user)
   const limit = checkDailyLimit(sender)
   if (!limit.ok) {
@@ -298,11 +310,12 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
     const promptWithContent = await maybeFetchUrl(body)
     const ans = await directChat(promptWithContent, { userEnv, _sender: sender })
     stopTyping(typing, sock, jid)
-    await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
+    // Sanitize reply: redact any leaked API keys before sending to user
+    await replyWa(sock, msg, sec.redactSecrets(ans.slice(0, MAX_OUTPUT)))
   } catch (e) {
     stopTyping(typing, sock, jid)
     console.error('[HERMES ERROR]', e.message)
-    await replyWa(sock, msg, `\u274c ${e.message}`)
+    await replyWa(sock, msg, `\u274c ${sec.redactSecrets(e.message)}`)
   }
 }
 
@@ -569,6 +582,17 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
     )
   }
 
+  // Security: length + jailbreak + extraction
+  const sec1 = sec.checkSecurity(text)
+  if (!sec1.ok) {
+    return replyWa(sock, msg, sec1.reason)
+  }
+  // Per-user rate limit
+  const rl = sec.checkRateLimit(sender || 'anon')
+  if (!rl.ok) {
+    return replyWa(sock, msg, rl.reason)
+  }
+
   // Typing indicator
   const jid = msg.key.remoteJid
   const typing = await startTyping(sock, jid)
@@ -580,11 +604,11 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
     prompt = await maybeFetchUrl(prompt)
     const ans = await directChat(prompt, { userEnv, _sender: '_ai_' + (sender || 'unknown') })
     stopTyping(typing, sock, jid)
-    await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
+    await replyWa(sock, msg, sec.redactSecrets(ans.slice(0, MAX_OUTPUT)))
   } catch (e) {
     stopTyping(typing, sock, jid)
     console.error('[HERMES ERROR]', e.message)
-    await replyWa(sock, msg, `❌ ${e.message}`)
+    await replyWa(sock, msg, `❌ ${sec.redactSecrets(e.message)}`)
   }
 }
 

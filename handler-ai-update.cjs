@@ -162,33 +162,12 @@ BATASAN:
 
 // ─── GROQ CHAT (untuk percakapan + coding) ───────────────────────────────────
 
+// ─── SECURITY (shared module — see security.cjs) ─────────────────────────────
+const sec = require('./security.cjs')
 
-
-// ─── ANTI JAILBREAK ───────────────────────────────────────────────────────────
-const JAILBREAK_PATTERNS = [
-  /akujilust/i,
-  /jailbreak/i,
-  /\bdan mode\b/i,
-  /do anything now/i,
-  /unfiltered/i,
-  /amoral/i,
-  /no ethical/i,
-  /ignore (all |previous |your )?(rules|instructions|guidelines)/i,
-  /pretend (you are|to be)/i,
-  /act as (if )?you (have no|are free|are not)/i,
-  /you are free from/i,
-  /bypass (your |all )?(rules|filters|restrictions)/i,
-  /you have no rules/i,
-  /without (any |ethical )?restrictions/i,
-  /kamu tidak punya aturan/i,
-  /pura-pura jadi/i,
-  /lupakan instruksi/i,
-  /abaikan instruksi/i,
-];
-
-function isJailbreak(text) {
-  return JAILBREAK_PATTERNS.some(p => p.test(text));
-}
+// ─── ANTI JAILBREAK (kept for backward compat; prefer sec.checkSecurity) ──────
+const JAILBREAK_PATTERNS = sec.JAILBREAK_PATTERNS || []
+function isJailbreak(text) { return sec.isJailbreak(text) }
 
 async function groqChat(apiKey, userId, userMessage) {
   addHistory(userId, 'user', userMessage);
@@ -503,17 +482,24 @@ async function handle(sock, m, geminiKey, groqKey) {
   if (!groqKey) return false;
 
   try {
-    // Cek jailbreak
-    if (isJailbreak(body)) {
-      await sendText('⚠️ Pesan tidak dapat diproses.');
-      return true;
+    // Security: length + rate limit + jailbreak + extraction
+    const sec1 = sec.checkSecurity(body)
+    if (!sec1.ok) {
+      await sendText(sec1.reason)
+      return true
+    }
+    const rl = sec.checkRateLimit(sender)
+    if (!rl.ok) {
+      await sendText(rl.reason)
+      return true
     }
 
-    await sock.sendPresenceUpdate('composing', from);
-    const reply = await groqChat(groqKey, userId, body);
-    await sendText(reply);
+    await sock.sendPresenceUpdate('composing', from)
+    const reply = await groqChat(groqKey, userId, body)
+    // Sanitize reply: redact any leaked API keys before sending to user
+    await sendText(sec.redactSecrets(reply))
   } catch (err) {
-    await sendText(`❌ AI Error: ${err.message}`);
+    await sendText(`❌ AI Error: ${sec.redactSecrets(err.message)}`)
   }
 
   return true;
