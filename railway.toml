@@ -1,0 +1,42 @@
+# Railway deployment config untuk yanzyaha-bot (Hermes Edition)
+# Auto-mount volume /opt/data biar session WA + memory Hermes persistent
+# Reference: AGENT repo pattern (venezuela-alt/AGENT)
+
+[build]
+builder = "DOCKERFILE"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Persistent volume — WA auth + Hermes sessions survive across redeploys
+[[volumes]]
+mountPath = "/opt/data"
+
+[variables]
+# === WA PAIRING (WAJIB) ===
+PHONE_NUMBER = { required = true, description = "Nomor WA buat pairing code. Format 62xxx (drop leading 0). Contoh: 62895618805248" }
+
+# === HERMES LLM BACKEND (WAJIB salah satu provider) ===
+# Default: tokenrouter.com (kayak AGENT repo)
+OPENAI_API_KEY = { required = true, description = "API key dari tokenrouter.com — daftar di https://tokenrouter.com" }
+OPENAI_BASE_URL = { required = true, description = "Default: https://api.tokenrouter.com/v1" }
+HERMES_MODEL = { required = true, description = "Model name — cek https://tokenrouter.com/models. Contoh: anthropic/claude-sonnet-4" }
+
+# === FITUR BOT LAIN (OPTIONAL, tapi tetep dipake) ===
+GEMINI_KEY = { required = false, description = "Google Gemini API key. Buat handler-ai-update.cjs (admin commands). https://aistudio.google.com/apikey" }
+GROQ_API_KEY = { required = false, description = "Groq API key. Buat image gen translate prompt. https://console.groq.com" }
+CF_ACCOUNT_ID = { required = false, description = "Cloudflare Workers AI account ID. Buat image generation." }
+CF_TOKEN = { required = false, description = "Cloudflare API token. Buat image generation." }
+
+# === TUNING (OPTIONAL, ada default) ===
+HERMES_HOME = { required = false, description = "Path data Hermes. Default: /opt/data. Sesuaiin dengan volume mount." }
+HERMES_TIMEOUT_MS = { required = false, description = "Subprocess timeout (ms). Default: 120000 (2 menit)" }
+HERMES_BIN = { required = false, description = "Path ke hermes binary. Default: hermes" }
+WA_AI_DAILY_LIMIT = { required = false, description = "Max chat AI per user per hari. 0 = unlimited. Default: 0" }
+UPDATE_YT_DLP = { required = false, description = "Set 1 buat auto-update yt-dlp tiap container start. Bantu bypass anti-bot YT yang sering berubah." }
+
+# === COST OPTIMIZATION (jarang pake bot) ===
+# Railway free credit: ~$5/bulan. 24/7 = ~720 jam. 
+# Sisa credit lo $3.69 = ~370 jam = ~15 hari 24/7.
+# Tips: kalo udah selesai pake, "down" service di Railway dashboard biar ga makan credit.
