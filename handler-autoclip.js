@@ -456,6 +456,19 @@ export async function handleAutoClip(sock, msg, url) {
 
   await sendText('✂️ *Langkah 5/5:* Memotong ' + top.length + ' clip (9:16 + subtitle)...')
 
+  // Pre-flight: probe video dimensions once (cheaper than probing per clip)
+  let probeOK = true
+  try {
+    const probe = await probeVideo(rawFile)
+    console.log('[AUTOCLIP] Source dimensions: ' + probe.width + 'x' + probe.height)
+  } catch (e) {
+    console.warn('[AUTOCLIP] Pre-flight probe failed, continuing anyway:', e.message)
+    probeOK = false
+  }
+
+  const successes = []   // [{idx, link, sizeMB, score, reason}]
+  const failures = []    // [{idx, error}]
+
   for (let i = 0; i < top.length; i++) {
     const seg = top[i]
     const startSec = seg.start_sec
@@ -464,6 +477,7 @@ export async function handleAutoClip(sock, msg, url) {
     const durSec = endSec - startSec
     if (durSec < 20) {
       await sendText('⚠️ Clip #' + (i+1) + ' terlalu pendek (' + durSec + 's). Skip.')
+      failures.push({ idx: i+1, error: 'terlalu pendek (' + durSec + 's)' })
       continue
     }
     const endFinal = durSec > 60 ? startSec + 60 : endSec
@@ -481,6 +495,7 @@ export async function handleAutoClip(sock, msg, url) {
       if (parseFloat(sizeMB) < 0.1) {
         await sendText('⚠️ Clip #' + (i+1) + ' kosong. Skip.')
         cleanTmp(outFile)
+        failures.push({ idx: i+1, error: 'output kosong' })
         continue
       }
       const tgCap = '🎬 Clip #' + (i+1) + '\n⏱️ ' + startClean + ' → ' + endCleanFinal + '\n⭐ ' + seg.score + '/100\n💡 ' + seg.reason
@@ -488,12 +503,32 @@ export async function handleAutoClip(sock, msg, url) {
       const msgId = tgResult?.result?.message_id
       const tgLink = msgId ? TG_CHANNEL + '/' + msgId : TG_CHANNEL
       await sendText('✅ Clip #' + (i+1) + ' berhasil! (' + sizeMB + 'MB, 9:16)\n🔗 ' + tgLink)
-      cleanTmp(outFile)
+      successes.push({ idx: i+1, link: tgLink, sizeMB, score: seg.score, reason: seg.reason, start: startClean, end: endCleanFinal })
     } catch (e) {
       cleanTmp(outFile)
-      await sendText('⚠️ Gagal clip #' + (i+1) + ': ' + e.message)
+      const errMsg = e.message.length > 200 ? e.message.slice(0, 200) + '...' : e.message
+      await sendText('⚠️ Gagal clip #' + (i+1) + ': ' + errMsg)
+      failures.push({ idx: i+1, error: errMsg })
+      // continue to next clip — never let one failure cascade
     }
   }
+
+  // Final summary
+  const total = successes.length + failures.length
+  let summary = '━━━━━━━━━━━━━━━━\n'
+  summary += '📊 *RINGKASAN AUTOCLIP*\n'
+  summary += '✅ Berhasil: ' + successes.length + '/' + total + '\n'
+  if (failures.length) {
+    summary += '❌ Gagal: ' + failures.length + '\n'
+    summary += failures.map(f => '   #' + f.idx + ' → ' + f.error).join('\n') + '\n'
+  }
+  if (successes.length) {
+    summary += '\n🎬 *Daftar clip berhasil:*\n'
+    summary += successes.map(s =>
+      '#' + s.idx + ' ' + s.start + '→' + s.end + ' (' + s.sizeMB + 'MB, ⭐' + s.score + ')\n' + s.link
+    ).join('\n')
+  }
+  await sendText(summary)
 
   cleanTmp(rawFile)
   clearInterval(keepAlive)
@@ -508,30 +543,68 @@ async function cutClipWithSubtitles(rawFile, outFile, startTime, endTime, transc
   const srtContent = buildSRT(transcript, segStart, segEnd)
   fs.writeFileSync(srtPath, srtContent, 'utf8')
 
-  // ffmpeg with: crop to 9:16 (smart center crop) + burn subtitles
-  // Filter explanation:
-  //   crop=ih*9/16:i   → vertical 9:16 from landscape (center crop)
-  //   scale=1080:1920  → upscale to TikTok resolution
-  //   subtitles=...    → burn SRT into video
+  // Probe video dimensions (defense: avoid crop=ih*9/16 if input isn't wide enough)
+  // min 9:16 width = height * 9/16. If input is narrower, fall back to vertical+pad
+  const probe = await probeVideo(rawFile)
+  const iw = probe.width
+  const ih = probe.height
+  const minW = Math.floor(ih * 9 / 16)  // e.g. 480h → 270w min
+  let cropExpr
+  if (iw >= minW) {
+    // Standard center-crop to 9:16
+    const cropW = minW
+    const cropX = Math.floor((iw - cropW) / 2)
+    cropExpr = 'crop=' + cropW + ':' + ih + ':' + cropX + ':0'
+  } else if (ih >= iw * 16 / 9) {
+    // Input is already vertical (9:16 or taller) — no crop needed
+    cropExpr = 'crop=' + iw + ':' + iw * 16 / 9 + ':0:0'
+    console.log('[AUTOCLIP] Input is already vertical, no crop needed')
+  } else {
+    // Input is too short and too narrow — pad to 9:16
+    const padW = Math.floor(ih * 9 / 16)
+    const padX = Math.floor((padW - iw) / 2)
+    cropExpr = 'pad=' + padW + ':' + ih + ':' + padX + ':0:black'
+    console.log('[AUTOCLIP] Input narrower than 9:16, padding to fit')
+  }
+
+  // ffmpeg with: crop/pad to 9:16 + burn subtitles
+  // Style: large Arial Black, white text + black outline, upper-third positioning
   const ffmpegCmd = [
     'ffmpeg -y',
     '-ss ' + startTime,
     '-to ' + endTime,
     '-i "' + rawFile + '"',
-    // crop=ih*9/16:i → vertical 9:16 from landscape (center crop)
-    // scale=1080:1920  → upscale to TikTok resolution
-    // subtitles=...    → burn SRT into video
-    // Style optimized for short-form: larger font, white text with black outline,
-    // positioned upper-third (not bottom) so it doesn't get covered by UI overlay
-    '-vf "crop=ih*9/16:i,scale=1080:1920,subtitles=' + srtPath + ':force_style=\'FontName=Arial Black,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=3,Shadow=1,Alignment=2,MarginV=120,Bold=1\'"',
+    '-vf "' + cropExpr + ',scale=1080:1920:flags=lanczos,subtitles=' + srtPath + ':force_style=\'FontName=Arial Black,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=3,Shadow=1,Alignment=2,MarginV=120,Bold=1\'"',
     '-c:v libx264 -preset fast -crf 23',
     '-c:a aac -b:a 128k',
     '-movflags +faststart',
+    '-loglevel error',          // suppress banner, show only errors
     '"' + outFile + '"'
   ].join(' ')
 
-  await execAsync(ffmpegCmd, { timeout: 300000 })
-  try { fs.unlinkSync(srtPath) } catch {}
+  try {
+    await execAsync(ffmpegCmd, { timeout: 300000 })
+  } finally {
+    // Always clean SRT
+    try { fs.unlinkSync(srtPath) } catch {}
+  }
+}
+
+// Probe video dimensions via ffprobe (cheap, no decoding)
+async function probeVideo(filePath) {
+  try {
+    const { stdout } = await execAsync(
+      'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "' + filePath + '"',
+      { timeout: 10000 }
+    )
+    const [w, h] = stdout.trim().split(',').map(Number)
+    if (w > 0 && h > 0) return { width: w, height: h }
+  } catch (e) {
+    console.error('[AUTOCLIP] probeVideo failed:', e.message)
+  }
+  // Fallback: assume standard landscape 16:9 if probe fails
+  console.warn('[AUTOCLIP] probeVideo: using fallback 854x480')
+  return { width: 854, height: 480 }
 }
 
 // Build SRT file content for the clip time range.

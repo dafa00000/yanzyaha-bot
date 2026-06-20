@@ -70,6 +70,41 @@ function tanya(pertanyaan) {
   return new Promise(resolve => rl.question(pertanyaan, ans => { rl.close(); resolve(ans.trim()) }))
 }
 
+// ─── GLOBAL ERROR SHIELDS (defense: bot never crashes, never loses WA session) ──
+// Tanpa ini, satu unhandled rejection dari handler manapun akan kill Node process
+// → Railway restart → WA session bisa ke-reset → user harus scan QR lagi.
+//
+// Tiap handler juga punya try/catch sendiri, tapi ini safety net global kalau ada
+// yang bocor (mis. error dari library Baileys, fs, atau process async yang ga di-catch).
+process.on('uncaughtException', (err, origin) => {
+  console.error('[FATAL] uncaughtException — bot survived, no restart needed')
+  console.error('  Message:', err?.message)
+  console.error('  Stack:', err?.stack?.split('\n').slice(0, 5).join('\n'))
+  console.error('  Origin:', origin)
+  // JANGAN process.exit() — biarkan bot tetap jalan
+})
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] unhandledRejection — bot survived')
+  console.error('  Reason:', reason?.message || reason)
+  if (reason?.stack) console.error('  Stack:', reason.stack.split('\n').slice(0, 5).join('\n'))
+  // JANGAN process.exit()
+})
+process.on('SIGTERM', () => {
+  console.log('[SHUTDOWN] SIGTERM received — graceful exit')
+  // Tutup socket dengan bersih kalau ada
+  if (typeof sock !== 'undefined' && sock?.end) {
+    try { sock.end() } catch {}
+  }
+  setTimeout(() => process.exit(0), 1000)
+})
+process.on('SIGINT', () => {
+  console.log('[SHUTDOWN] SIGINT received — graceful exit')
+  if (typeof sock !== 'undefined' && sock?.end) {
+    try { sock.end() } catch {}
+  }
+  setTimeout(() => process.exit(0), 1000)
+})
+
 async function startBot() {
   // Auth path: $HERMES_HOME/auth (persistent volume di Railway).
   // Fallback ke ./auth kalo ga di-set (untuk dev lokal).
