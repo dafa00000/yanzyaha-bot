@@ -78,8 +78,11 @@ function runHermes(prompt, opts = {}) {
     const args = ['chat', '-q', prompt, '-Q', '--source', SOURCE_TAG]
 
     if (opts.resume) args.push('--continue', opts.resume)
-    if (opts.model || DEFAULT_MODEL) {
-      args.push('-m', opts.model || DEFAULT_MODEL)
+    // Resolve model: opts.model > userEnv.HERMES_MODEL > DEFAULT_MODEL (Railway)
+    const userModel = (opts.userEnv && opts.userEnv.HERMES_MODEL) || ''
+    const effectiveModel = opts.model || userModel || DEFAULT_MODEL
+    if (effectiveModel) {
+      args.push('-m', effectiveModel)
     }
     if (opts.toolsets && opts.toolsets.length) {
       args.push('-t', opts.toolsets.join(','))
@@ -100,6 +103,15 @@ function runHermes(prompt, opts = {}) {
         if (v != null && v !== '') env[k] = String(v)
       }
     }
+
+    // DEBUG: log effective env (masked) and args
+    const envLog = {}
+    for (const [k, v] of Object.entries(env)) {
+      const isSecret = /KEY|TOKEN|SECRET|PASSWORD/i.test(k)
+      envLog[k] = (isSecret && v) ? (v.length <= 8 ? '***' : v.slice(0,4) + '****' + v.slice(-4)) : v
+    }
+    console.log('[HERMES] sender=' + (opts._sender || '?') + ' env=' + JSON.stringify(envLog))
+    console.log('[HERMES] args=' + JSON.stringify(args))
 
     let proc
     try {
@@ -151,19 +163,29 @@ function runHermes(prompt, opts = {}) {
         // Retry without --continue so Hermes creates fresh session.
         const retryOpts = Object.assign({}, opts, { resume: null, _retried: true })
         runHermes(prompt, retryOpts).then(resolve, reject)
-      } else if (/401|Authentication|api[_-]?key/i.test(combined)) {
-        // API key missing or invalid — give actionable error
+      // Log full stderr ke console untuk debug (lihat di Railway logs)
+      if (err && err.length > 0) {
+        console.error('[HERMES STDERR]', err.slice(-800))
+      }
+
+      } else if (/401|Authentication|api[_-]?key|invalid[_ ]?api[_ ]?key|missing.*auth/i.test(combined)) {
+        // API key missing or invalid — extract detail dari stderr
+        const modelMatch = combined.match(/model["'\': ]+([\w\-\/]+)/i)
+        const modelInfo = modelMatch ? '\nModel yg diminta: `' + modelMatch[1] + '`' : ''
+        const errMatch = combined.match(/(?:error|message)["'\': ]+([^"'\n]+)/i)
+        const errDetail = errMatch ? '\nDetail: ' + errMatch[1].slice(0, 150) : ''
+
         reject(new Error(
-          '🔑 API key belum di-set atau invalid.\n\n' +
-          'Cara fix:\n' +
-          '1. Buka Railway → project → Variables\n' +
-          '2. Set OPENAI_API_KEY (dari tokenrouter.com)\n' +
-          '3. Set OPENAI_BASE_URL=https://api.tokenrouter.com/v1\n' +
-          '4. Set HERMES_MODEL (lihat tokenrouter.com/models)\n\n' +
-          'Atau via WA: .setapikey <key>, .setbaseurl <url>, .setmodel <model>'
+          '🔑 API key invalid / model ditolak provider.\n\n' +
+          (modelInfo || errDetail || 'Cek Railway Variables atau .myconfig') +
+          '\n\n*Cara fix:*\n' +
+          '1. Cek API key di dashboard provider\n' +
+          '2. Cek model name sesuai format provider\n' +
+          '3. `.apitest` buat diagnostic lengkap\n' +
+          '4. `.models` buat liat model yang tersedia'
         ))
       } else {
-        const tail = combined.slice(-400)
+        const tail = combined.slice(-500)
         reject(new Error(`exit ${code}: ${tail}`))
       }
     })
@@ -198,7 +220,7 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
 
   try {
     const sessionId = senderToSession(sender)
-    const ans = await runHermes(body, { resume: sessionId, userEnv })
+    const ans = await runHermes(body, { resume: sessionId, userEnv, _sender: sender })
     await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
   } catch (e) {
     console.error('[HERMES ERROR]', e.message)
@@ -220,7 +242,7 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
 
   try {
     // .ai command = single-shot, no session (biar ga nyampur context)
-    const ans = await runHermes(text.trim(), { userEnv })
+    const ans = await runHermes(text.trim(), { userEnv, _sender: sender })
     await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
   } catch (e) {
     console.error('[HERMES ERROR]', e.message)

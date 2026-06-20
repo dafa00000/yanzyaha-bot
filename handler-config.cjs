@@ -103,12 +103,22 @@ let userConfigs = new Map() // senderJid -> { OPENAI_API_KEY, OPENAI_BASE_URL, H
 
 function loadUserConfigs() {
   try {
-    if (fs.existsSync(USER_CONFIG_PATH)) {
-      const data = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, 'utf8'))
-      userConfigs = new Map(Object.entries(data))
-      if (userConfigs.size > 0) {
-        console.log(`[CONFIG] Loaded ${userConfigs.size} user config(s) from ${USER_CONFIG_PATH}`)
+    if (!fs.existsSync(USER_CONFIG_PATH)) {
+      console.log('[CONFIG] No user_configs.json at ' + USER_CONFIG_PATH)
+      return
+    }
+    const data = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, 'utf8'))
+    userConfigs = new Map(Object.entries(data))
+    console.log('[CONFIG] Loaded ' + userConfigs.size + ' user config(s) from ' + USER_CONFIG_PATH)
+    // Log each sender's config (masked) for debugging
+    let i = 0
+    for (const [sender, cfg] of userConfigs) {
+      const dbg = {}
+      for (const [k, v] of Object.entries(cfg)) {
+        dbg[k] = /KEY|TOKEN|SECRET|PASSWORD/i.test(k) && v ? maskKey(v) : v
       }
+      console.log('[CONFIG]   ' + sender + ': ' + JSON.stringify(dbg))
+      i++
     }
   } catch (e) {
     console.error('[CONFIG] user configs load error:', e.message)
@@ -120,6 +130,7 @@ function saveUserConfigs() {
     const obj = Object.fromEntries(userConfigs)
     fs.mkdirSync(path.dirname(USER_CONFIG_PATH), { recursive: true })
     fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(obj, null, 2))
+    console.log('[CONFIG] Saved ' + userConfigs.size + ' user config(s) to ' + USER_CONFIG_PATH)
   } catch (e) {
     console.error('[CONFIG] user configs save error:', e.message)
   }
@@ -143,6 +154,12 @@ function setUserConfig(sender, updates) {
     userConfigs.set(sender, updated)
   }
   saveUserConfigs()
+  // DEBUG: log what was saved (mask secrets)
+  const dbg = {}
+  for (const [k, v] of Object.entries(updated)) {
+    dbg[k] = /KEY|TOKEN|SECRET|PASSWORD/i.test(k) && v ? maskKey(v) : v
+  }
+  console.log('[CONFIG] setUserConfig(' + sender + ') ->', JSON.stringify(dbg))
   return updated
 }
 
@@ -304,6 +321,12 @@ async function handle(sock, msg, body, sender) {
       return handleModels(sock, jid, msg, sender)
     }
 
+    case 'apitest':
+    case 'testapikey':
+    case 'checkapi': {
+      return handleApiTest(sock, jid, msg, sender)
+    }
+
     case 'myconfig':
     case 'mycfg': {
       return showUserConfig(sock, jid, msg, sender)
@@ -442,6 +465,110 @@ async function showGlobalConfig(sock, jid, msg) {
     fs.existsSync(CONFIG_PATH) ? '✅ Loaded dari file' : 'ℹ️ Belum ada file (pakai env Railway)',
   ]
   return replyWa(sock, jid, lines.join('\n'), msg)
+}
+
+// ─── .apitest handler (debug: verify API key + list model) ───
+async function handleApiTest(sock, jid, msg, sender) {
+  const userCfg = getUserConfig(sender)
+  const effective = getEffectiveEnv(sender)
+  const apiKey = effective.OPENAI_API_KEY
+  const baseUrl = effective.OPENAI_BASE_URL
+  const model = effective.HERMES_MODEL || '(unset)'
+
+  const lines = [
+    '🔬 *API Diagnostic*',
+    '',
+    '`BASE_URL`  : ' + (baseUrl || '_(unset)_') +
+      (userCfg.OPENAI_BASE_URL ? ' _[custom]_' : ' _[Railway]_'),
+    '`API_KEY`   : ' + maskKey(apiKey) +
+      (userCfg.OPENAI_API_KEY ? ' _[custom]_' : ' _[Railway]_'),
+    '`MODEL`     : ' + model +
+      (userCfg.HERMES_MODEL ? ' _[custom]_' : ' _[Railway]_'),
+    '',
+  ]
+
+  if (!baseUrl || !apiKey) {
+    lines.push('❌ Base URL atau API key belum di-set.')
+    return replyWa(sock, jid, lines.join('\n'), msg)
+  }
+
+  await replyWa(sock, jid, lines.join('\n') + '\n⏳ Testing...', msg)
+
+  // Test 1: hit /models endpoint
+  try {
+    const url = baseUrl.replace(/\/+$/, '') + '/models'
+    const res = await fetch(url, {
+      headers: { 'Authorization': 'Bearer ' + apiKey, 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    })
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '')
+      lines.push('━━━━━━━━━━━━━━━━━')
+      lines.push('❌ *Gagal hit `/models`*')
+      lines.push('Status: *' + res.status + '* ' + res.statusText)
+      lines.push('Response:')
+      lines.push('```')
+      lines.push(errText.slice(0, 500))
+      lines.push('```')
+      if (res.status === 401 || res.status === 403) {
+        lines.push('')
+        lines.push('💡 API key *invalid atau expired*.')
+        lines.push('Cek di ' + (baseUrl.includes('tokenrouter') ? 'https://tokenrouter.com' : 'dashboard provider lo'))
+      } else if (res.status === 404) {
+        lines.push('')
+        lines.push('💡 Endpoint `/models` ga ada di provider ini.')
+        lines.push('Provider ga support listing model.')
+      }
+      return replyWa(sock, jid, lines.join('\n'), msg)
+    }
+
+    const data = await res.json()
+    const models = Array.isArray(data) ? data : (data.data || [])
+    const modelIds = models.map(m => typeof m === 'string' ? m : (m.id || m.name || m.model)).filter(Boolean)
+
+    lines.push('━━━━━━━━━━━━━━━━━')
+    lines.push('✅ *Koneksi OK*')
+    lines.push('Total model: *' + modelIds.length + '*')
+    lines.push('')
+
+    // Test 2: cek model yang lagi dipake ada ga
+    const curModel = userCfg.HERMES_MODEL || process.env.HERMES_MODEL
+    if (curModel) {
+      const exists = modelIds.includes(curModel)
+      if (exists) {
+        lines.push('✅ Model `' + curModel + '` *tersedia* di provider')
+      } else {
+        lines.push('❌ Model `' + curModel + '` *TIDAK ADA* di provider!')
+        lines.push('')
+        lines.push('Beberapa model yang mirip:')
+        const similar = modelIds.filter(m => {
+          const lc = m.toLowerCase()
+          const lc2 = curModel.toLowerCase()
+          return lc.includes(lc2.split('/').pop().split('-')[0]) ||
+                 lc2.includes(lc.split('/').pop().split('-')[0])
+        }).slice(0, 5)
+        if (similar.length) {
+          for (const m of similar) lines.push('  • `' + m + '`')
+        } else {
+          lines.push('  (ga ada yang mirip)')
+          lines.push('')
+          lines.push('Liat semua: `.models`')
+        }
+      }
+    } else {
+      lines.push('⚠️ Model belum di-set. Coba `.models` dulu.')
+    }
+
+    return replyWa(sock, jid, lines.join('\n'), msg)
+  } catch (e) {
+    lines.push('━━━━━━━━━━━━━━━━━')
+    lines.push('❌ *Error fetch*')
+    lines.push('```')
+    lines.push(e.message.slice(0, 500))
+    lines.push('```')
+    return replyWa(sock, jid, lines.join('\n'), msg)
+  }
 }
 
 // ─── PUBLIC ───────────────────────────────────────────────────
