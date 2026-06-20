@@ -133,13 +133,30 @@ function runHermes(prompt, opts = {}) {
       clearTimeout(timer)
       const out = stripAnsi(stdout).trim()
       const err = stripAnsi(stderr).trim()
+      const combined = (out + '\n' + err).trim()
 
       if (code === 0 && out) {
         resolve(out)
       } else if (code === 0) {
         reject(new Error('Hermes returned no output'))
+      } else if (/No session found/i.test(combined) && opts.resume && !opts._retried) {
+        // First message from this user — session doesn't exist yet.
+        // Retry without --continue so Hermes creates fresh session.
+        const retryOpts = Object.assign({}, opts, { resume: null, _retried: true })
+        runHermes(prompt, retryOpts).then(resolve, reject)
+      } else if (/401|Authentication|api[_-]?key/i.test(combined)) {
+        // API key missing or invalid — give actionable error
+        reject(new Error(
+          '🔑 API key belum di-set atau invalid.\n\n' +
+          'Cara fix:\n' +
+          '1. Buka Railway → project → Variables\n' +
+          '2. Set OPENAI_API_KEY (dari tokenrouter.com)\n' +
+          '3. Set OPENAI_BASE_URL=https://api.tokenrouter.com/v1\n' +
+          '4. Set HERMES_MODEL (lihat tokenrouter.com/models)\n\n' +
+          'Atau via WA: .setapikey <key>, .setbaseurl <url>, .setmodel <model>'
+        ))
       } else {
-        const tail = (err || out).slice(-400)
+        const tail = combined.slice(-400)
         reject(new Error(`exit ${code}: ${tail}`))
       }
     })
