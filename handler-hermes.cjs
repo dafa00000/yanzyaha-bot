@@ -82,9 +82,10 @@ function runHermes(prompt, opts = {}) {
     // which has Railway's OLD (possibly invalid) API key.
     args.push('--ignore-user-config')
     args.push('--ignore-rules')
-    // Explicitly select OpenAI-compatible provider so Hermes reads
-    // OPENAI_API_KEY + OPENAI_BASE_URL env vars
-    args.push('--provider', 'openai')
+    // NOTE: --provider flag rejected by Hermes ("Unknown provider 'openai'").
+    // Hermes auto-detects provider from env var prefixes (OPENAI_*, ANTHROPIC_*, etc).
+    // If Hermes can't auto-detect for tokenrouter, we'll need to bypass Hermes
+    // entirely and call the API directly.
 
     if (opts.resume) args.push('--continue', opts.resume)
     // Resolve model: opts.model > userEnv.HERMES_MODEL > DEFAULT_MODEL (Railway)

@@ -327,6 +327,12 @@ async function handle(sock, msg, body, sender) {
       return handleApiTest(sock, jid, msg, sender)
     }
 
+    case 'hermesmodel':
+    case 'hermesproviders':
+    case 'hermescheck': {
+      return handleHermesModel(sock, jid, msg)
+    }
+
     case 'myconfig':
     case 'mycfg': {
       return showUserConfig(sock, jid, msg, sender)
@@ -572,6 +578,49 @@ async function handleApiTest(sock, jid, msg, sender) {
 }
 
 // ─── PUBLIC ───────────────────────────────────────────────────
+// ---- .hermesmodel handler (debug: list Hermes providers) ----
+async function handleHermesModel(sock, jid, msg) {
+  const { spawn } = require('child_process')
+  const hermesBin = process.env.HERMES_BIN || 'hermes'
+  await replyWa(sock, jid, 'ð Running `hermes model` ...', msg)
+  return new Promise(resolve => {
+    const proc = spawn(hermesBin, ['model'], {
+      env: Object.assign({}, process.env, { NO_COLOR: '1' }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let out = '', err = ''
+    proc.stdout.on('data', d => out += d.toString())
+    proc.stderr.on('data', d => err += d.toString())
+    const timer = setTimeout(() => { try { proc.kill() } catch (_) {} }, 15000)
+    proc.on('close', async code => {
+      clearTimeout(timer)
+      const stripAnsi = s => String(s).replace(/\[[0-9;?]*[ -/]*[@-~]/g, '')
+      const cleanOut = stripAnsi(out).trim()
+      const cleanErr = stripAnsi(err).trim()
+      const lines = [
+        'ð *Hermes Providers*',
+        '',
+        '```',
+        cleanOut.slice(0, 1500) || '(no stdout)',
+        '```',
+      ]
+      if (cleanErr) {
+        lines.push(''); lines.push('stderr:')
+        lines.push('```'); lines.push(cleanErr.slice(0, 500)); lines.push('```')
+      }
+      lines.push('')
+      lines.push('Exit code: ' + code)
+      await replyWa(sock, jid, lines.join('\\n'), msg)
+      resolve()
+    })
+    proc.on('error', async e => {
+      clearTimeout(timer)
+      await replyWa(sock, jid, 'â Error: ' + e.message, msg)
+      resolve()
+    })
+  })
+}
+
 module.exports = {
   // Global (owner) — backward compat
   loadConfig,
