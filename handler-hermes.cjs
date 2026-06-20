@@ -21,7 +21,25 @@ const HISTORY_DIR = path.join(process.env.HERMES_HOME || '/opt/data', 'sessions'
 const HISTORY_MAX = 50
 
 // System prompt — bikin AI jawab langsung tanpa basa-basi
-const SYSTEM_PROMPT = `You are a casual WhatsApp assistant. Reply briefly in Indonesian/English mix. NO greetings, NO self-introduction, NO "ada yang bisa saya bantu". Just answer directly. Use markdown when useful (bold, lists, code). Keep it under 1500 chars unless user asks for more.`
+const SYSTEM_PROMPT = `Kamu adalah asisten WhatsApp casual. Jawab LANGSUNG tanpa basa-basi.
+
+ATURAN KETAT:
+- JANGAN mulai dengan Halo, Hai, Tentu, Baik, Oke, Selamat
+- JANGAN perkenalkan diri
+- JANGAN ulangi pertanyaan user
+- Langsung ke jawaban/aksi
+- Maks 800 karakter kecuali user minta detail
+- Pakai markdown kalau perlu (bold, list, code)
+- Bahasa: casual Indo/Eng mix, sama seperti user
+- Kalau ga tau, bilang 'ga tau' aja
+
+Contoh BENER:
+User: cara install node?
+Kamu: bash  brew install node  atau download dari nodejs.org
+
+Contoh SALAH:
+User: cara install node?
+Kamu: Halo! Tentu, saya akan bantu install Node.js ya. Berikut langkah-langkahnya...`
 
 // ─── CONFIG ───────────────────────────────────────────────────
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
@@ -184,7 +202,7 @@ function runHermes(prompt, opts = {}) {
       const combined = (out + '\n' + err).trim()
 
       if (code === 0 && out) {
-        resolve(out)
+        resolve(cleanReply(out))
       } else if (code === 0) {
         reject(new Error('Hermes returned no output'))
       } else if (/No session found/i.test(combined) && opts.resume && !opts._retried) {
@@ -265,7 +283,9 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
   const typing = await startTyping(sock, jid)
 
   try {
-    const ans = await directChat(body, { userEnv, _sender: sender })
+    // Auto-fetch URL kalau ada di body
+    const promptWithContent = await maybeFetchUrl(body)
+    const ans = await directChat(promptWithContent, { userEnv, _sender: sender })
     stopTyping(typing, sock, jid)
     await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
   } catch (e) {
@@ -278,6 +298,95 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
 // ---- DIRECT API CHAT (OpenAI-compatible) ----
 // Bypasses Hermes CLI - works reliably with per-user config.
 // .ai command still uses Hermes CLI for full tools/skills.
+
+function cleanReply(text) {
+  if (!text) return text
+  let s = String(text).trim()
+  // Find think tags (some models use 1 or both)
+  const openM = s.match(/<think(?:ing)?>/i)
+  if (!openM) return s || '(no response)'
+  const openIdx = openM.index
+  const closeM = s.slice(openIdx).match(/<\/think(?:ing)?>/i)
+  const closeIdx = closeM ? openIdx + closeM.index : s.length
+  // Extract content inside the think block (or to end if unclosed)
+  const inside = s.slice(openIdx + openM[0].length, closeIdx).trim()
+  // Strip leftover closing tag if unclosed
+  const cleanInside = inside.replace(/<\/?think(?:ing)?>/gi, '').trim()
+  // Strategy: take the LAST paragraph (after final blank line) — that's the actual answer
+  const paragraphs = cleanInside.split(/\n\s*\n/).filter(p => p.trim())
+  if (paragraphs.length > 1) {
+    return paragraphs[paragraphs.length - 1].trim()
+  }
+  // No blank line — try last line as answer (skip reasoning line at start)
+  const lines = cleanInside.split('\n').map(l => l.trim()).filter(Boolean)
+  if (lines.length > 1) {
+    return lines[lines.length - 1]
+  }
+  return cleanInside || s.replace(/<think(?:ing)?>[\s\S]*$/i, '').trim() || '(no response)'
+}
+
+// ---- URL FETCHER ----
+// Detect URL di prompt, fetch contentnya, dan inject ke prompt.
+// Khususnya untuk GitHub: convert blob URL ke raw URL biar dapet raw text.
+async function fetchUrlContent(url) {
+  try {
+    // Transform GitHub blob URL ke raw
+    let fetchUrl = url
+    const ghMatch = url.match(/^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)\/blob\/(.+)$/i)
+    if (ghMatch) {
+      fetchUrl = 'https://raw.githubusercontent.com/' + ghMatch[1] + '/' + ghMatch[2] + '/' + ghMatch[3]
+    }
+
+    const res = await fetch(fetchUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; WA-Bot/1.0)' },
+      signal: AbortSignal.timeout(20000),
+      redirect: 'follow',
+    })
+    if (!res.ok) return null
+    const contentType = res.headers.get('content-type') || ''
+    let text = await res.text()
+
+    // Kalau HTML, strip tags
+    if (contentType.includes('html') || text.trim().startsWith('<')) {
+      text = text
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
+        .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
+        .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+    return text.slice(0, 8000) // hard limit
+  } catch (e) {
+    console.error('[URL-FETCH]', url, e.message)
+    return null
+  }
+}
+
+// Strip internal reasoning blocks (think, thinking, etc) that some models leak
+
+
+async function maybeFetchUrl(prompt) {
+  const urlMatch = prompt.match(/https?:\/\/[^\s]+/i)
+  if (!urlMatch) return prompt
+  const url = urlMatch[0].replace(/[)\]}>.,;]+$/, '') // trim trailing punctuation
+  console.log('[URL-FETCH] detected:', url)
+  const content = await fetchUrlContent(url)
+  if (!content) {
+    return prompt + '\n\n(Catatan: Bot gagal fetch konten dari ' + url + ')'
+  }
+  // Remove URL from prompt, prepend fetched content
+  const cleanPrompt = prompt.replace(url, '').trim() || 'Jelasin file ini'
+  return 'User minta: ' + cleanPrompt + '\n\n=== Konten dari ' + url + ' (fetched ' + new Date().toISOString() + ') ===\n\`\`\`\n' + content + '\n\`\`\`'
+}
 
 async function loadHistory(sender) {
   const sessionId = senderToSession(sender)
@@ -356,7 +465,9 @@ async function directChat(prompt, opts = {}) {
   }
 
   const data = await res.json().catch(() => ({}))
-  const reply = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '(empty response)'
+  let reply = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '(empty response)'
+  // Strip internal reasoning blocks that some models leak
+  reply = cleanReply(reply)
 
   messages.push({ role: 'assistant', content: reply })
   await saveHistory(opts._sender, messages)
@@ -378,8 +489,11 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
   const typing = await startTyping(sock, jid)
 
   try {
-    // .ai command = single-shot, no session (biar ga nyampur context)
-    const ans = await runHermes(text.trim(), { userEnv, _sender: sender })
+    // .ai command juga pake direct API (Hermes CLI ga reliable buat per-user config)
+    let prompt = text.trim()
+    // Auto-fetch URL kalau ada di prompt
+    prompt = await maybeFetchUrl(prompt)
+    const ans = await directChat(prompt, { userEnv, _sender: '_ai_' + (sender || 'unknown') })
     stopTyping(typing, sock, jid)
     await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
   } catch (e) {
@@ -411,5 +525,8 @@ module.exports = {
   handleReset,
   runHermes, // exported for testing
   directChat, // exported for testing
+  fetchUrlContent, // exported for testing
+  cleanReply, // exported for testing
+  maybeFetchUrl, // exported for testing
   senderToSession,
 }

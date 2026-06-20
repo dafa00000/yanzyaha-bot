@@ -467,12 +467,16 @@ case 'download':
           if (!text) return sendText(`❌ Contoh: ${PREFIX}teks Halo Dunia`)
           await sendText(text)
           break
-                // ==================== AI HERMES (via Hermes Agent) ====================
+                // ==================== AI CHAT (.ai alias untuk chat biasa) ====================
+        // .ai dan .grok sekarang SAMA dengan chat bebas (handleChat).
+        // Tidak ada command khusus lagi - semua chat lewat direct API + memory.
         case 'ai':
         case 'grok': {
+          const queryText = text || (body.split(/\s+/).slice(1).join(' '))
+          if (!queryText.trim()) return sendText(`Contoh: ${PREFIX}ai halo apa kabar?`)
           const userEnv = configHandler.getEffectiveEnv(sender)
-          await hermesHandler.handleCommand(sock, msg, text, sender, userEnv)
-          break
+          await hermesHandler.handleChat(sock, msg, queryText, sender, userEnv)
+          return
         }
 
         // ==================== CONFIG (per-user + global owner) ====================
