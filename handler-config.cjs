@@ -1,19 +1,20 @@
 'use strict'
 /**
  * handler-config.cjs
- * Owner-only menu buat manage config Hermes Agent via WhatsApp.
+ * Config management — global (owner) + per-user.
  *
- * Commands:
- *   .setapikey <key>     → set OPENAI_API_KEY (sekaligus OPENAI_API_KEYS)
- *   .setbaseurl <url>    → set OPENAI_BASE_URL
- *   .setmodel <model>    → set HERMES_MODEL
- *   .settimeout <ms>     → set HERMES_TIMEOUT_MS
- *   .setlimit <n>        → set WA_AI_DAILY_LIMIT (0 = unlimited)
- *   .showconfig          → show config (API key di-mask)
- *   .resetconfig         → hapus file config.json (balik ke env var Railway)
+ * GLOBAL (owner only) — saved to $HERMES_HOME/config.json:
+ *   .showconfig   → show global config
+ *   .resetconfig  → hapus config.json, balik ke env Railway
  *
- * Storage: $HERMES_HOME/config.json
- * Hot-reload: mutate process.env langsung → handler-hermes.cjs auto baca
+ * PER-USER (semua user) — saved to $HERMES_HOME/user_configs.json:
+ *   .setapikey <key>   → set OPENAI_API_KEY buat user ini
+ *   .setbaseurl <url>  → set OPENAI_BASE_URL
+ *   .setmodel <model>  → set HERMES_MODEL
+ *   .models            → fetch list model dari effective base_url
+ *   .myconfig          → show effective config user ini (masked)
+ *
+ * Priority per-user: per-user > global env (Railway) > fallback
  */
 
 const fs = require('fs')
@@ -22,19 +23,21 @@ const path = require('path')
 // ─── CONFIG ───────────────────────────────────────────────────
 const HERMES_HOME = process.env.HERMES_HOME || '/opt/data'
 const CONFIG_PATH = path.join(HERMES_HOME, 'config.json')
+const USER_CONFIG_PATH = path.join(HERMES_HOME, 'user_configs.json')
 
-// Whitelist env vars yang boleh di-set dari WA (anti abuse)
+// Env vars yang boleh di-set per-user
+const USER_KEYS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'HERMES_MODEL']
+
+// Whitelist env vars yang boleh di-set GLOBAL (owner only)
 const ALLOWED_KEYS = [
-  'OPENAI_API_KEY',
+  ...USER_KEYS,
   'OPENAI_API_KEYS',
-  'OPENAI_BASE_URL',
-  'HERMES_MODEL',
   'HERMES_TIMEOUT_MS',
   'WA_AI_DAILY_LIMIT',
   'HERMES_BIN',
 ]
 
-// Owner check (imported dari config.cjs di runtime)
+// Owner check
 let OWNER_LIDS = []
 try {
   const botConfig = require('./config.cjs')
@@ -46,7 +49,7 @@ try {
   console.error('[CONFIG] failed to load config.cjs:', e.message)
 }
 
-// ─── LOAD on startup ────────────────────────────────────────
+// ─── GLOBAL CONFIG ────────────────────────────────────────────
 function loadConfig() {
   try {
     if (!fs.existsSync(CONFIG_PATH)) return
@@ -59,14 +62,13 @@ function loadConfig() {
       }
     }
     if (count > 0) {
-      console.log(`[CONFIG] Loaded ${count} runtime override(s) from ${CONFIG_PATH}`)
+      console.log(`[CONFIG] Loaded ${count} global override(s) from ${CONFIG_PATH}`)
     }
   } catch (e) {
-    console.error('[CONFIG] load error:', e.message)
+    console.error('[CONFIG] global load error:', e.message)
   }
 }
 
-// ─── SAVE ─────────────────────────────────────────────────────
 function saveConfig(updates) {
   let cfg = {}
   try {
@@ -74,34 +76,129 @@ function saveConfig(updates) {
       cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
     }
   } catch (e) {
-    console.error('[CONFIG] read existing failed:', e.message)
+    console.error('[CONFIG] read global failed:', e.message)
   }
-
   for (const [k, v] of Object.entries(updates)) {
     if (ALLOWED_KEYS.includes(k) && v != null && v !== '') {
       cfg[k] = String(v)
       process.env[k] = String(v)
     }
   }
-
   fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2))
   return cfg
 }
 
-// ─── RESET ────────────────────────────────────────────────────
 function resetConfig() {
   try {
-    if (fs.existsSync(CONFIG_PATH)) {
-      fs.unlinkSync(CONFIG_PATH)
-    }
-    // process.env ga di-reset (env Railway tetep ada)
-    // next subprocess call akan baca dari process.env yg ada
+    if (fs.existsSync(CONFIG_PATH)) fs.unlinkSync(CONFIG_PATH)
     return true
   } catch (e) {
-    console.error('[CONFIG] reset error:', e.message)
     return false
   }
+}
+
+// ─── PER-USER CONFIG ──────────────────────────────────────────
+let userConfigs = new Map() // senderJid -> { OPENAI_API_KEY, OPENAI_BASE_URL, HERMES_MODEL }
+
+function loadUserConfigs() {
+  try {
+    if (fs.existsSync(USER_CONFIG_PATH)) {
+      const data = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, 'utf8'))
+      userConfigs = new Map(Object.entries(data))
+      if (userConfigs.size > 0) {
+        console.log(`[CONFIG] Loaded ${userConfigs.size} user config(s) from ${USER_CONFIG_PATH}`)
+      }
+    }
+  } catch (e) {
+    console.error('[CONFIG] user configs load error:', e.message)
+  }
+}
+
+function saveUserConfigs() {
+  try {
+    const obj = Object.fromEntries(userConfigs)
+    fs.mkdirSync(path.dirname(USER_CONFIG_PATH), { recursive: true })
+    fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(obj, null, 2))
+  } catch (e) {
+    console.error('[CONFIG] user configs save error:', e.message)
+  }
+}
+
+function getUserConfig(sender) {
+  return userConfigs.get(sender) || {}
+}
+
+function setUserConfig(sender, updates) {
+  const cur = getUserConfig(sender)
+  const updated = { ...cur }
+  for (const [k, v] of Object.entries(updates)) {
+    if (!USER_KEYS.includes(k)) continue
+    if (v != null && v !== '') updated[k] = String(v)
+    else delete updated[k] // unset kalo empty
+  }
+  if (Object.keys(updated).length === 0) {
+    userConfigs.delete(sender)
+  } else {
+    userConfigs.set(sender, updated)
+  }
+  saveUserConfigs()
+  return updated
+}
+
+function clearUserConfig(sender) {
+  userConfigs.delete(sender)
+  saveUserConfigs()
+}
+
+// Merge: per-user > global env > no value
+function getEffectiveEnv(sender) {
+  const env = {}
+  // Start with Railway env (loaded into process.env by loadConfig already)
+  for (const k of USER_KEYS) {
+    if (process.env[k]) env[k] = process.env[k]
+  }
+  // Override with per-user
+  const userCfg = getUserConfig(sender)
+  for (const [k, v] of Object.entries(userCfg)) {
+    if (v) env[k] = String(v)
+  }
+  return env
+}
+
+// ─── MODEL FETCHER ────────────────────────────────────────────
+const modelsCache = new Map()
+const MODELS_CACHE_TTL = 60 * 60 * 1000 // 1 jam
+
+async function fetchModels(baseUrl, apiKey) {
+  const url = `${baseUrl.replace(/\/+$/, '')}/models`
+  const headers = { 'Accept': 'application/json' }
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+  
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status} dari ${url}\n${text.slice(0, 200)}`)
+  }
+  const data = await res.json()
+  // OpenAI format: { data: [{id, ...}, ...] }
+  // Beberapa provider balikin array langsung, handle dua-duanya
+  const models = Array.isArray(data) ? data : (data.data || [])
+  return models
+    .map(m => typeof m === 'string' ? m : (m.id || m.name || m.model))
+    .filter(Boolean)
+    .sort()
+}
+
+async function getModelsCached(baseUrl, apiKey) {
+  const cacheKey = `${baseUrl}|${(apiKey || '').slice(0, 8)}`
+  const cached = modelsCache.get(cacheKey)
+  if (cached && Date.now() - cached.at < MODELS_CACHE_TTL) {
+    return { models: cached.models, cached: true }
+  }
+  const models = await fetchModels(baseUrl, apiKey)
+  modelsCache.set(cacheKey, { models, at: Date.now() })
+  return { models, cached: false }
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────
@@ -117,149 +214,256 @@ function isOwner(sender) {
   return OWNER_LIDS.includes(num)
 }
 
-// ─── HANDLE ───────────────────────────────────────────────────
+function senderId(sender) {
+  // normalize: 628xxx@s.whatsapp.net → 628xxx
+  return sender.split('@')[0].split(':')[0]
+}
+
+async function replyWa(sock, jid, text, quoted) {
+  return sock.sendMessage(jid, { text }, quoted ? { quoted } : {})
+}
+
+// ─── MAIN HANDLER ─────────────────────────────────────────────
 async function handle(sock, msg, body, sender) {
   const jid = msg.key.remoteJid
-
-  if (!isOwner(sender)) {
-    return sock.sendMessage(jid, {
-      text: '❌ Config commands cuma bisa dipake owner.',
-    }, { quoted: msg })
-  }
-
   const trimmed = body.trim()
-  // Strip leading prefix kalau ada
-  const stripped = trimmed.replace(/^[.!]\s*/, '')
+  const stripped = trimmed.replace(/^[.!]\s*/, '') // accept . or / prefix
   const args = stripped.split(/\s+/)
   const cmd = args[0]?.toLowerCase()
   const value = args.slice(1).join(' ').trim()
 
+  // ═══ GLOBAL (owner only) ═══
+  if (cmd === 'showconfig' || cmd === 'cfg') {
+    if (!isOwner(sender)) {
+      return replyWa(sock, jid, '❌ Owner only.', msg)
+    }
+    return showGlobalConfig(sock, jid, msg)
+  }
+
+  if (cmd === 'resetconfig' || cmd === 'cfgreset') {
+    if (!isOwner(sender)) {
+      return replyWa(sock, jid, '❌ Owner only.', msg)
+    }
+    const ok = resetConfig()
+    return replyWa(sock, jid,
+      ok
+        ? '✅ Global config di-reset. Bot sekarang pake env var Railway.\n*Restart service untuk efek penuh.*'
+        : '❌ Reset gagal.',
+      msg
+    )
+  }
+
+  // ═══ PER-USER (semua user) ═══
   switch (cmd) {
     case 'setapikey':
-    case 'setkey': {
+    case 'myapikey': {
       if (!value) {
-        return sock.sendMessage(jid, {
-          text: '⚠️ Contoh: `.setapikey sk-abc123...`',
-        }, { quoted: msg })
+        return replyWa(sock, jid,
+          '⚠️ Contoh: `.setapikey sk-abc123...`\n\n' +
+          'Set API key *pribadi* lo. Billing ke akun lo sendiri.\n' +
+          'Kalo ga set, pake API key default dari Railway.',
+          msg
+        )
       }
-      saveConfig({
-        OPENAI_API_KEY: value,
-        OPENAI_API_KEYS: value,
-      })
-      return sock.sendMessage(jid, {
-        text: `✅ API key disimpan.\nMasked: \`${maskKey(value)}\`\nHot-reload aktif — langsung dipake.`,
-      }, { quoted: msg })
+      setUserConfig(sender, { OPENAI_API_KEY: value })
+      return replyWa(sock, jid,
+        `✅ API key lo disimpan.\n` +
+        `Masked: \`${maskKey(value)}\`\n\n` +
+        'Sekarang lo bisa pake model apapun sesuai billing lo sendiri.',
+        msg
+      )
     }
 
     case 'setbaseurl':
-    case 'seturl': {
+    case 'mybaseurl': {
       if (!value || !value.match(/^https?:\/\//)) {
-        return sock.sendMessage(jid, {
-          text: '⚠️ Contoh: `.setbaseurl https://api.tokenrouter.com/v1`',
-        }, { quoted: msg })
+        return replyWa(sock, jid,
+          '⚠️ Contoh: `.setbaseurl https://api.openrouter.ai/api/v1`\n\n' +
+          'Default: base_url dari Railway env.',
+          msg
+        )
       }
-      saveConfig({ OPENAI_BASE_URL: value })
-      return sock.sendMessage(jid, {
-        text: `✅ Base URL disimpan: \`${value}\`\nHot-reload aktif.`,
-      }, { quoted: msg })
+      setUserConfig(sender, { OPENAI_BASE_URL: value })
+      return replyWa(sock, jid, `✅ Base URL lo: \`${value}\``, msg)
     }
 
-    case 'setmodel': {
+    case 'setmodel':
+    case 'mymodel': {
       if (!value) {
-        return sock.sendMessage(jid, {
-          text: '⚠️ Contoh: `.setmodel anthropic/claude-sonnet-4`',
-        }, { quoted: msg })
+        return replyWa(sock, jid,
+          '⚠️ Contoh: `.setmodel anthropic/claude-sonnet-4`\n\n' +
+          'Atau `.models` dulu buat liat daftar model.',
+          msg
+        )
       }
-      saveConfig({ HERMES_MODEL: value })
-      return sock.sendMessage(jid, {
-        text: `✅ Model disimpan: \`${value}\``,
-      }, { quoted: msg })
+      setUserConfig(sender, { HERMES_MODEL: value })
+      return replyWa(sock, jid, `✅ Model lo: \`${value}\``, msg)
     }
 
-    case 'settimeout': {
-      const ms = parseInt(value, 10)
-      if (!ms || ms < 5000 || ms > 600000) {
-        return sock.sendMessage(jid, {
-          text: '⚠️ Timeout harus 5000-600000 ms.\nContoh: `.settimeout 120000`',
-        }, { quoted: msg })
-      }
-      saveConfig({ HERMES_TIMEOUT_MS: String(ms) })
-      return sock.sendMessage(jid, {
-        text: `✅ Timeout disimpan: ${ms}ms (${(ms / 1000).toFixed(0)}s)`,
-      }, { quoted: msg })
+    case 'models': {
+      return handleModels(sock, jid, msg, sender)
     }
 
-    case 'setlimit':
-    case 'setdaily': {
-      const n = parseInt(value, 10)
-      if (isNaN(n) || n < 0 || n > 10000) {
-        return sock.sendMessage(jid, {
-          text: '⚠️ Limit harus 0-10000. 0 = unlimited.\nContoh: `.setlimit 50`',
-        }, { quoted: msg })
-      }
-      saveConfig({ WA_AI_DAILY_LIMIT: String(n) })
-      return sock.sendMessage(jid, {
-        text: `✅ Daily limit disimpan: ${n === 0 ? 'unlimited' : n + ' pesan/hari'}`,
-      }, { quoted: msg })
+    case 'myconfig':
+    case 'mycfg': {
+      return showUserConfig(sock, jid, msg, sender)
     }
 
-    case 'showconfig':
-    case 'cfg': {
-      const cfg = (() => {
-        try {
-          return fs.existsSync(CONFIG_PATH)
-            ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
-            : {}
-        } catch { return {} }
-      })()
-      const lines = [
-        '⚙️ *Current Config*',
-        '',
-        '`OPENAI_API_KEY`    : ' + maskKey(process.env.OPENAI_API_KEY),
-        '`OPENAI_BASE_URL`   : ' + (process.env.OPENAI_BASE_URL || '_(unset)_'),
-        '`HERMES_MODEL`      : ' + (process.env.HERMES_MODEL || '_(unset)_'),
-        '`HERMES_TIMEOUT_MS` : ' + (process.env.HERMES_TIMEOUT_MS || '90000'),
-        '`WA_AI_DAILY_LIMIT` : ' + (process.env.WA_AI_DAILY_LIMIT || '0'),
-        '`HERMES_HOME`       : ' + (process.env.HERMES_HOME || '/opt/data'),
-        '',
-        `📁 Config file: \`${CONFIG_PATH}\``,
-        fs.existsSync(CONFIG_PATH) ? '✅ Loaded dari file' : 'ℹ️ Belum ada file (pakai env Railway)',
-      ]
-      return sock.sendMessage(jid, {
-        text: lines.join('\n'),
-      }, { quoted: msg })
-    }
-
-    case 'resetconfig':
-    case 'cfgreset': {
-      const ok = resetConfig()
-      return sock.sendMessage(jid, {
-        text: ok
-          ? '✅ Config di-reset. Bot sekarang pake env var Railway.\nRestart untuk efek penuh.'
-          : '❌ Reset gagal, cek logs.',
-      }, { quoted: msg })
+    case 'resetmyconfig':
+    case 'clearmyconfig': {
+      clearUserConfig(sender)
+      return replyWa(sock, jid,
+        '✅ Config lo di-reset. Sekarang pake default dari Railway.',
+        msg
+      )
     }
 
     default:
-      return sock.sendMessage(jid, {
-        text:
-          '⚙️ *Config Commands* (owner only)\n\n' +
-          '• `.setapikey <key>`\n' +
-          '• `.setbaseurl <url>`\n' +
-          '• `.setmodel <model>`\n' +
-          '• `.settimeout <ms>` (5000-600000)\n' +
-          '• `.setlimit <n>` (0 = unlimited)\n' +
-          '• `.showconfig`\n' +
-          '• `.resetconfig`\n\n' +
-          '💡 Hot-reload: ga perlu restart, langsung dipake.',
-      }, { quoted: msg })
+      // ga ada command yg match
+      return null // signal ke caller: bukan config command
   }
 }
 
+// ─── .models handler ─────────────────────────────────────────
+async function handleModels(sock, jid, msg, sender) {
+  const cfg = getEffectiveEnv(sender)
+  const baseUrl = cfg.OPENAI_BASE_URL
+  const apiKey = cfg.OPENAI_API_KEY
+
+  if (!baseUrl) {
+    return replyWa(sock, jid,
+      '⚠️ Base URL belum di-set.\n\n' +
+      'Set dulu via:\n' +
+      '• `.setbaseurl https://api.example.com/v1` (pribadi)\n' +
+      '• atau set `OPENAI_BASE_URL` di Railway env (default)\n\n' +
+      'Default tokenrouter: `https://api.tokenrouter.com/v1`',
+      msg
+    )
+  }
+
+  await replyWa(sock, jid, '🔄 Fetching models...', msg)
+
+  try {
+    const { models, cached } = await getModelsCached(baseUrl, apiKey)
+    const userCfg = getUserConfig(sender)
+    const userModel = userCfg.HERMES_MODEL || process.env.HERMES_MODEL || ''
+
+    // Group by provider (prefix sebelum /)
+    const groups = {}
+    for (const m of models) {
+      const slashIdx = m.indexOf('/')
+      const provider = slashIdx > 0 ? m.slice(0, slashIdx) : 'other'
+      const providerName = provider.charAt(0).toUpperCase() + provider.slice(1)
+      if (!groups[providerName]) groups[providerName] = []
+      groups[providerName].push(m)
+    }
+
+    const lines = []
+    for (const [provider, list] of Object.entries(groups)) {
+      lines.push(`*${provider}* (${list.length})`)
+      for (const m of list.slice(0, 30)) {
+        const marker = m === userModel ? ' ← aktif' : ''
+        lines.push(`  • \`${m}\`${marker}`)
+      }
+      if (list.length > 30) lines.push(`  _... +${list.length - 30} more_`)
+      lines.push('')
+    }
+
+    const source = userCfg.OPENAI_BASE_URL
+      ? 'base_url lo'
+      : 'base_url Railway (default)'
+
+    const cachedNote = cached ? ' (cached)' : ''
+
+    lines.push('━━━━━━━━━━━━━━━━━')
+    lines.push(`Total: *${models.length}* model${cachedNote}`)
+    lines.push(`Source: ${source}`)
+    lines.push('')
+    lines.push('Set model: `.setmodel <name>`')
+
+    return replyWa(sock, jid, '🤖 *Available Models*\n\n' + lines.join('\n'), msg)
+  } catch (e) {
+    return replyWa(sock, jid,
+      `❌ Gagal fetch models dari \`${baseUrl}\`\n\n` +
+      `Error: ${e.message}\n\n` +
+      'Cek:\n' +
+      '• Base URL valid?\n' +
+      '• API key punya akses?\n' +
+      '• Provider support `/models` endpoint?',
+      msg
+    )
+  }
+}
+
+// ─── show helpers ────────────────────────────────────────────
+async function showUserConfig(sock, jid, msg, sender) {
+  const userCfg = getUserConfig(sender)
+  const effective = getEffectiveEnv(sender)
+
+  const lines = [
+    '⚙️ *Config Lo*',
+    '',
+    '`API_KEY`   : ' + maskKey(effective.OPENAI_API_KEY) +
+      (userCfg.OPENAI_API_KEY ? ' _[custom]_' : ' _[Railway]_'),
+    '`BASE_URL`  : ' + (effective.OPENAI_BASE_URL || '_(unset)_') +
+      (userCfg.OPENAI_BASE_URL ? ' _[custom]_' : ' _[Railway]_'),
+    '`MODEL`     : ' + (effective.HERMES_MODEL || '_(unset)_') +
+      (userCfg.HERMES_MODEL ? ' _[custom]_' : ' _[Railway]_'),
+    '',
+    'Commands:',
+    '• `.setapikey <key>`',
+    '• `.setbaseurl <url>`',
+    '• `.setmodel <model>`',
+    '• `.models` — list semua model',
+    '• `.resetmyconfig` — hapus custom lo',
+  ]
+  return replyWa(sock, jid, lines.join('\n'), msg)
+}
+
+async function showGlobalConfig(sock, jid, msg) {
+  const cfg = (() => {
+    try {
+      return fs.existsSync(CONFIG_PATH)
+        ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+        : {}
+    } catch { return {} }
+  })()
+  const lines = [
+    '⚙️ *Global Config (Owner)*',
+    '',
+    '`OPENAI_API_KEY`    : ' + maskKey(process.env.OPENAI_API_KEY),
+    '`OPENAI_BASE_URL`   : ' + (process.env.OPENAI_BASE_URL || '_(unset)_'),
+    '`HERMES_MODEL`      : ' + (process.env.HERMES_MODEL || '_(unset)_'),
+    '`HERMES_TIMEOUT_MS` : ' + (process.env.HERMES_TIMEOUT_MS || '90000'),
+    '`WA_AI_DAILY_LIMIT` : ' + (process.env.WA_AI_DAILY_LIMIT || '0'),
+    '`HERMES_HOME`       : ' + (process.env.HERMES_HOME || '/opt/data'),
+    '',
+    `📁 Config file: \`${CONFIG_PATH}\``,
+    fs.existsSync(CONFIG_PATH) ? '✅ Loaded dari file' : 'ℹ️ Belum ada file (pakai env Railway)',
+  ]
+  return replyWa(sock, jid, lines.join('\n'), msg)
+}
+
+// ─── PUBLIC ───────────────────────────────────────────────────
 module.exports = {
-  handle,
+  // Global (owner) — backward compat
   loadConfig,
   saveConfig,
   resetConfig,
   ALLOWED_KEYS,
+
+  // Per-user
+  loadUserConfigs,
+  saveUserConfigs,
+  getUserConfig,
+  setUserConfig,
+  clearUserConfig,
+  getEffectiveEnv,
+
+  // Models
+  fetchModels,
+  getModelsCached,
+
+  // Main dispatcher (returns null if not a config command)
+  handle,
 }

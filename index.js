@@ -52,6 +52,8 @@ const botConfig = require('./config.cjs')
 
 // Load runtime config overrides dari $HERMES_HOME/config.json
 configHandler.loadConfig()
+// Load per-user configs dari $HERMES_HOME/user_configs.json
+configHandler.loadUserConfigs()
 
 const PREFIX = '.'
 let isReconnecting = false
@@ -265,7 +267,8 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     // Memory per-user via --resume session (persist di $HERMES_HOME).
     if (body && !body.startsWith(PREFIX)) {
       if (isGroup) return
-      await hermesHandler.handleChat(sock, msg, body, sender)
+      const userEnv = configHandler.getEffectiveEnv(sender)
+      await hermesHandler.handleChat(sock, msg, body, sender, userEnv)
       return
     }
     // ================== END AI CHAT ==================
@@ -467,25 +470,35 @@ case 'download':
                 // ==================== AI HERMES (via Hermes Agent) ====================
         case 'ai':
         case 'grok': {
-          await hermesHandler.handleCommand(sock, msg, text)
+          const userEnv = configHandler.getEffectiveEnv(sender)
+          await hermesHandler.handleCommand(sock, msg, text, sender, userEnv)
           break
         }
 
-        // ==================== CONFIG (Owner Only) ====================
+        // ==================== CONFIG (per-user + global owner) ====================
+        // Per-user: setapikey, setbaseurl, setmodel, models, myconfig, resetmyconfig
+        // Owner-only: showconfig, resetconfig
         case 'setapikey':
         case 'setkey':
         case 'setbaseurl':
         case 'seturl':
         case 'setmodel':
-        case 'settimeout':
-        case 'setlimit':
-        case 'setdaily':
         case 'showconfig':
         case 'cfg':
         case 'resetconfig':
-        case 'cfgreset': {
-          await configHandler.handle(sock, msg, body, sender)
-          break
+        case 'cfgreset':
+        case 'models':
+        case 'myconfig':
+        case 'mycfg':
+        case 'myapikey':
+        case 'mybaseurl':
+        case 'mymodel':
+        case 'resetmyconfig':
+        case 'clearmyconfig': {
+          const handled = await configHandler.handle(sock, msg, body, sender)
+          // handle() returns null kalau command ga match → biarin flow lanjut
+          if (handled !== null) break
+          return
         }
 
 

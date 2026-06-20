@@ -89,9 +89,16 @@ function runHermes(prompt, opts = {}) {
     }
 
     // Build env yang di-forward (only what we need)
+    // Start with parent env (filtered), then override with user-specific env if provided
     const env = { TERM: 'dumb', NO_COLOR: '1' }
     for (const k of FORWARD_ENV) {
       if (process.env[k]) env[k] = process.env[k]
+    }
+    // Per-user override (from getEffectiveEnv(sender))
+    if (opts.userEnv && typeof opts.userEnv === 'object') {
+      for (const [k, v] of Object.entries(opts.userEnv)) {
+        if (v != null && v !== '') env[k] = String(v)
+      }
     }
 
     let proc
@@ -169,7 +176,7 @@ async function replyWa(sock, msg, text) {
 }
 
 // ─── HANDLE: chat bebas (no prefix, private) ─────────────────
-async function handleChat(sock, msg, body, sender) {
+async function handleChat(sock, msg, body, sender, userEnv = null) {
   // Optional daily limit (per-user)
   const limit = checkDailyLimit(sender)
   if (!limit.ok) {
@@ -191,7 +198,7 @@ async function handleChat(sock, msg, body, sender) {
 
   try {
     const sessionId = senderToSession(sender)
-    const ans = await runHermes(body, { resume: sessionId })
+    const ans = await runHermes(body, { resume: sessionId, userEnv })
     await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
   } catch (e) {
     console.error('[HERMES ERROR]', e.message)
@@ -200,7 +207,7 @@ async function handleChat(sock, msg, body, sender) {
 }
 
 // ─── HANDLE: explicit .ai / .grok command ────────────────────
-async function handleCommand(sock, msg, text) {
+async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
   if (!text || !text.trim()) {
     return replyWa(
       sock,
@@ -213,7 +220,7 @@ async function handleCommand(sock, msg, text) {
 
   try {
     // .ai command = single-shot, no session (biar ga nyampur context)
-    const ans = await runHermes(text.trim())
+    const ans = await runHermes(text.trim(), { userEnv })
     await replyWa(sock, msg, ans.slice(0, MAX_OUTPUT))
   } catch (e) {
     console.error('[HERMES ERROR]', e.message)

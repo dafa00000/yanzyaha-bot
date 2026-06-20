@@ -18,14 +18,20 @@ export function getMenuText(sender) {
 │ ◇ Per-user memory (Hermes session)
 ╰────────────────
 
-╭─「 ⚙️ CONFIG (Owner Only) 」
-│ ⌬ .setapikey <key>      » Set API key
-│ ⌬ .setbaseurl <url>     » Set base URL
-│ ⌬ .setmodel <model>     » Set model
-│ ⌬ .settimeout <ms>      » Subprocess timeout
-│ ⌬ .setlimit <n>         » Daily limit (0=∞)
-│ ⌬ .showconfig           » Lihat config
-│ ⌬ .resetconfig          » Reset ke env
+╭─「 ⚙️ PERSONAL CONFIG (per-user) 」
+│ ◇ Tiap user bisa punya API key / model sendiri
+│ ⌬ .models               » List model dr base_url
+│ ⌬ .setapikey <key>      » Set API key pribadi
+│ ⌬ .setbaseurl <url>     » Set base URL pribadi
+│ ⌬ .setmodel <model>     » Set model pribadi
+│ ⌬ .myconfig             » Lihat config lo
+│ ⌬ .resetmyconfig        » Hapus config custom
+│ ◇ Kosong = pake default Railway
+╰────────────────
+
+╭─「 👑 OWNER CONFIG 」
+│ ⌬ .showconfig           » Global config
+│ ⌬ .resetconfig          » Reset global
 ╰────────────────
 
 ╭─「 📥 DOWNLOAD 」
