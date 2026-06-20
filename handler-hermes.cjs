@@ -23,23 +23,34 @@ const HISTORY_MAX = 50
 // System prompt — bikin AI jawab langsung tanpa basa-basi
 const SYSTEM_PROMPT = `Kamu adalah asisten WhatsApp casual. Jawab LANGSUNG tanpa basa-basi.
 
-ATURAN KETAT:
+ATURAN KETAT (WAJIB):
 - JANGAN mulai dengan Halo, Hai, Tentu, Baik, Oke, Selamat
 - JANGAN perkenalkan diri
 - JANGAN ulangi pertanyaan user
+- JANGAN PERNAH output reasoning, thinking, atau meta-commentary
+- JANGAN mulai dengan "The user...", "I should...", "Let me...", "I need to..."
+- User HANYA lihat response final kamu — bukan proses berpikir
+- Kalau ga tau, bilang 'ga tau' aja
 - Langsung ke jawaban/aksi
 - Maks 800 karakter kecuali user minta detail
 - Pakai markdown kalau perlu (bold, list, code)
 - Bahasa: casual Indo/Eng mix, sama seperti user
-- Kalau ga tau, bilang 'ga tau' aja
 
 Contoh BENER:
 User: cara install node?
 Kamu: bash  brew install node  atau download dari nodejs.org
 
-Contoh SALAH:
+Contoh SALAH (JANGAN kayak gini):
 User: cara install node?
-Kamu: Halo! Tentu, saya akan bantu install Node.js ya. Berikut langkah-langkahnya...`
+Kamu: Halo! Tentu, saya akan bantu install Node.js ya. Berikut langkah-langkahnya...
+
+Contoh SALAH (JANGAN kayak gini):
+User: halo
+Kamu: The user is greeting me. I should respond casually and stay in character as a WhatsApp assistant. Hai juga!
+
+Contoh BENER (yang kayak gini):
+User: halo
+Kamu: hai, ada yang bisa dibantu?`
 
 // ─── CONFIG ───────────────────────────────────────────────────
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
@@ -299,30 +310,52 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
 // Bypasses Hermes CLI - works reliably with per-user config.
 // .ai command still uses Hermes CLI for full tools/skills.
 
+// Reasoning-as-answer patterns. Models leak these as plain text (no think tags)
+// when reasoning is enabled at API level or system prompt is ignored.
+// Each alternative ends with \b so it matches at end of string too, not just before space.
+// Covers: meta-instruction ("The user is X", "I should...", "Let me think..."),
+//          tone directives ("Keep it casual", "Be brief", "Stay in character"),
+//          meta-narration ("My response is...", "OK so...").
+const REASONING_START_RE = /^\s*(?:The user (?:is|asked|wants|seems|appears|might|probably|greeted|says|said|told|pinged|just|replied|wrote)\b|I (?:should|need to|will|am going|must|have to|'ll)\b|Let me (?:think|consider|figure|start|write|respond|give|try|analyze|check)\b|My (?:response|answer|task|goal) is\b|I'll (?:need|start|write|generate|provide|create|respond|give|help)\b|OK,? so\b|Alright,? so\b|First,? I\b|Since the user\b|Given that\b|Looking at (?:the|this)\b|Based on (?:the|this)\b|I(?:'m| am) (?:going to|about to)\b|Keep it (?:light|casual|brief|friendly|short|simple|engaging|positive|professional|short and|safe|fresh|natural|warm)\b|Stay in character\b|Be (?:friendly|casual|brief|concise|short|professional|warm|positive|natural|helpful)\b)/i
+
+function isReasoningText(s) {
+  return REASONING_START_RE.test(s)
+}
+
 function cleanReply(text) {
-  if (!text) return text
+  if (!text) return null
   let s = String(text).trim()
-  // Find think tags (some models use 1 or both)
-  const openM = s.match(/<think(?:ing)?>/i)
-  if (!openM) return s || '(no response)'
-  const openIdx = openM.index
-  const closeM = s.slice(openIdx).match(/<\/think(?:ing)?>/i)
-  const closeIdx = closeM ? openIdx + closeM.index : s.length
-  // Extract content inside the think block (or to end if unclosed)
-  const inside = s.slice(openIdx + openM[0].length, closeIdx).trim()
-  // Strip leftover closing tag if unclosed
-  const cleanInside = inside.replace(/<\/?think(?:ing)?>/gi, '').trim()
-  // Strategy: take the LAST paragraph (after final blank line) — that's the actual answer
-  const paragraphs = cleanInside.split(/\n\s*\n/).filter(p => p.trim())
-  if (paragraphs.length > 1) {
-    return paragraphs[paragraphs.length - 1].trim()
+  if (!s) return null
+
+  // 1. Strip complete think blocks (greedy multiline)
+  const thinkRe = /<\/?think(?:ing)?>/gi
+  s = s.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '').trim()
+
+  // 2. Strip orphan think tags
+  s = s.replace(thinkRe, '').trim()
+  if (!s) return null
+
+  // 3. Detect reasoning-as-answer (no tags, just meta-commentary as response)
+  if (isReasoningText(s)) {
+    // 3a. Try splitting by blank line and keeping non-reasoning paragraphs
+    const paras = s.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean)
+    const cleanParas = paras.filter(p => !isReasoningText(p))
+    if (cleanParas.length) {
+      s = cleanParas.join('\n\n').trim()
+    } else {
+      // 3b. Try sentence-level extraction — keep sentences that aren't reasoning
+      const sentences = s.split(/(?<=[.!?])\s+/).map(x => x.trim()).filter(Boolean)
+      const cleanSentences = sentences.filter(x => !isReasoningText(x))
+      if (cleanSentences.length) {
+        s = cleanSentences.slice(-2).join(' ').trim()
+      } else {
+        // 3c. Pure reasoning, no detectable answer — signal failure
+        s = ''
+      }
+    }
   }
-  // No blank line — try last line as answer (skip reasoning line at start)
-  const lines = cleanInside.split('\n').map(l => l.trim()).filter(Boolean)
-  if (lines.length > 1) {
-    return lines[lines.length - 1]
-  }
-  return cleanInside || s.replace(/<think(?:ing)?>[\s\S]*$/i, '').trim() || '(no response)'
+
+  return s || null
 }
 
 // ---- URL FETCHER ----
@@ -433,6 +466,17 @@ async function directChat(prompt, opts = {}) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs || TIMEOUT_MS)
 
+  // Pass multiple "disable reasoning" params — provider picks what it supports
+  // - enable_thinking: Qwen-style + tokenrouter passthrough
+  // - reasoning: false: OpenAI o-series
+  // - thinking: {type: disabled}: Anthropic
+  const noReasoningParams = {
+    enable_thinking: false,
+    reasoning: false,
+    thinking: { type: 'disabled' },
+    chat_template_kwargs: { enable_thinking: false },
+  }
+
   let res
   try {
     res = await fetch(url, {
@@ -441,7 +485,7 @@ async function directChat(prompt, opts = {}) {
         'Authorization': 'Bearer ' + apiKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ model: model, messages: messages, stream: false }),
+      body: JSON.stringify({ model: model, messages: messages, stream: false, ...noReasoningParams }),
       signal: controller.signal,
     })
   } finally {
@@ -465,9 +509,50 @@ async function directChat(prompt, opts = {}) {
   }
 
   const data = await res.json().catch(() => ({}))
-  let reply = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '(empty response)'
-  // Strip internal reasoning blocks that some models leak
-  reply = cleanReply(reply)
+  let rawReply = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || ''
+  let reply = cleanReply(rawReply)
+
+  // If cleanReply returned null → response was pure reasoning / thinking leak.
+  // Retry once with HARDER instruction as a follow-up user message.
+  if (!reply && rawReply) {
+    console.log('[DIRECT-CHAT] Pure-reasoning leak detected, retrying with hard instruction. raw=' + rawReply.slice(0, 100))
+    const retryMessages = [
+      ...messages,
+      { role: 'assistant', content: rawReply },
+      { role: 'user', content: 'STOP. Response sebelumnya cuma berisi reasoning/internal thinking, bukan jawaban. Sekarang jawab pesan user di atas LANGSUNG dengan jawaban final. JANGAN ada reasoning, JANGAN ada "The user...", JANGAN ada "I should...". Pure answer only.' }
+    ]
+    const controller2 = new AbortController()
+    const timer2 = setTimeout(() => controller2.abort(), opts.timeoutMs || TIMEOUT_MS)
+    let res2
+    try {
+      res2 = await fetch(url, {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, messages: retryMessages, stream: false, temperature: 0.3, ...noReasoningParams }),
+        signal: controller2.signal,
+      })
+    } finally {
+      clearTimeout(timer2)
+    }
+    if (res2.ok) {
+      const data2 = await res2.json().catch(() => ({}))
+      const raw2 = (data2.choices && data2.choices[0] && data2.choices[0].message && data2.choices[0].message.content) || ''
+      const cleaned2 = cleanReply(raw2)
+      if (cleaned2) {
+        reply = cleaned2
+        rawReply = raw2
+        console.log('[DIRECT-CHAT] Retry succeeded.')
+      } else {
+        console.log('[DIRECT-CHAT] Retry still leaked. Using fallback.')
+        reply = null
+      }
+    }
+  }
+
+  // Final fallback — kalau tetep ga bisa bersih
+  if (!reply) {
+    reply = '🤔 Lagi mikir keras nih, coba tanya lagi dengan cara lain ya.'
+  }
 
   messages.push({ role: 'assistant', content: reply })
   await saveHistory(opts._sender, messages)
