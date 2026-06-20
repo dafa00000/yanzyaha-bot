@@ -220,8 +220,12 @@ async function analyzeWithOpenRouter(segments, maxSec) {
 }
 
 // ─── DISPATCHER: pilih LLM terbaik yang available ──────────────────────────
-// Priority: ANTHROPIC > OPENAI > OPENROUTER > GEMINI (Claude paling jago creative judgment)
-// Free tier friendly: kalau ga ada paid key, fallback ke OpenRouter free → Gemini free
+// Priority: GEMINI (free, no rate limit, reliable) > Claude (if paid) >
+//           OpenAI/tokenrouter (might 503 if model not in plan) > OpenRouter free (rate limited)
+//   Rationale: Gemini is the only fully-free provider with no rate limit.
+//   OpenAI via tokenrouter can 503 if the model isn't in user's plan group.
+//   OpenRouter free is rate-limited upstream daily.
+//   Claude is best quality but requires a paid key.
 async function analyzeWithLLM(segments, maxSec, opts = {}) {
   // If user specified LLM via .autoclip --llm=xxx, honor it
   const forced = opts.llm || process.env.AUTOCLIP_LLM
@@ -233,24 +237,26 @@ async function analyzeWithLLM(segments, maxSec, opts = {}) {
     if (forced === 'gemini') return { ...(await analyzeWithGemini(segments, maxSec)), provider: 'gemini' }
     throw new Error('Unknown LLM: ' + forced)
   }
-  // Auto-fallback priority
-  if (process.env.ANTHROPIC_API_KEY) {
-    try { const r = await analyzeWithClaude(segments, maxSec); return { ...r, provider: 'claude' } }
-    catch (e) { console.error('[AUTOCLIP] Claude fail:', e.message) }
-  }
-  if (process.env.OPENAI_API_KEY) {
-    try { const r = await analyzeWithOpenAI(segments, maxSec); return { ...r, provider: 'openai' } }
-    catch (e) { console.error('[AUTOCLIP] OpenAI fail:', e.message) }
-  }
-  if (process.env.OPENROUTER_API_KEY) {
-    try { const r = await analyzeWithOpenRouter(segments, maxSec); return { ...r, provider: 'openrouter' } }
-    catch (e) { console.error('[AUTOCLIP] OpenRouter fail:', e.message) }
-  }
+  // Auto-fallback priority — Gemini first (free, no rate limit, no plan group)
   if (GEMINI_API_KEY) {
     try { const r = await analyzeWithGemini(segments, maxSec); return { ...r, provider: 'gemini' } }
     catch (e) { console.error('[AUTOCLIP] Gemini fail:', e.message) }
   }
-  throw new Error('Tidak ada API key AI yang available. Set salah satu: ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GEMINI_KEY di Railway.')
+  if (process.env.ANTHROPIC_API_KEY) {
+    try { const r = await analyzeWithClaude(segments, maxSec); return { ...r, provider: 'claude' } }
+    catch (e) { console.error('[AUTOCLIP] Claude fail:', e.message) }
+  }
+  // OpenAI is tried AFTER Gemini/Claude because tokenrouter may 503 on wrong model
+  if (process.env.OPENAI_API_KEY) {
+    try { const r = await analyzeWithOpenAI(segments, maxSec); return { ...r, provider: 'openai' } }
+    catch (e) { console.error('[AUTOCLIP] OpenAI fail:', e.message) }
+  }
+  // OpenRouter free is last because it has the harshest rate limits upstream
+  if (process.env.OPENROUTER_API_KEY) {
+    try { const r = await analyzeWithOpenRouter(segments, maxSec); return { ...r, provider: 'openrouter' } }
+    catch (e) { console.error('[AUTOCLIP] OpenRouter fail:', e.message) }
+  }
+  throw new Error('Tidak ada API key AI yang available. Set salah satu: GEMINI_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY di Railway.')
 }
 
 // ─── PROMPT BUILDER (shared across providers) ───────────────────────────────
