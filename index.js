@@ -345,22 +345,36 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
         case 'menu':
         case 'help': {
           const { readFileSync: rfs } = await import('fs')
-          const { existsSync, unlinkSync } = await import('fs')
+          const { existsSync } = await import('fs')
           const vidPath = './assets/menu.mp4'
           const imgPath = './assets/menu.jpg'
-          if (existsSync(vidPath)) {
-            await sock.sendMessage(from, {
-              video: rfs(vidPath),
-              caption: getMenuText(msg),
-              gifPlayback: false
-            }, { quoted: msg })
-          } else if (existsSync(imgPath)) {
-            await sock.sendMessage(from, {
-              image: rfs(imgPath),
-              caption: getMenuText(msg)
-            }, { quoted: msg })
-          } else {
-            await sendText(getMenuText(msg))
+          console.log('[MENU] Request from', from, 'isGroup:', isGroup)
+          const fullText = getMenuText(msg)
+          console.log('[MENU] Text length:', fullText.length, 'chars')
+          try {
+            // WhatsApp caption limit = 1024 chars. Full menu is ~2400 chars,
+            // so we send the menu as a separate text message AFTER the media.
+            if (existsSync(vidPath)) {
+              await sock.sendMessage(from, {
+                video: rfs(vidPath),
+                caption: '╭─「 YANZYAHA-BOT 」\n│ Teks menu di bawah ⬇️\n╰────────────────',
+                gifPlayback: false
+              }, { quoted: msg })
+              await sendText(fullText)
+            } else if (existsSync(imgPath)) {
+              await sock.sendMessage(from, {
+                image: rfs(imgPath),
+                caption: '╭─「 YANZYAHA-BOT 」\n│ Teks menu di bawah ⬇️\n╰────────────────'
+              }, { quoted: msg })
+              await sendText(fullText)
+            } else {
+              await sendText(fullText)
+            }
+            console.log('[MENU] Sent OK to', from)
+          } catch (menuErr) {
+            console.error('[MENU] Send failed:', menuErr.message)
+            // Fallback: just text
+            try { await sendText(fullText) } catch {}
           }
           break
         }
