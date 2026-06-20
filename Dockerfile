@@ -21,9 +21,9 @@ RUN if command -v apk >/dev/null 2>&1; then \
 
 # Install yt-dlp — coba pip3, fallback ke python3 -m pip (lebih portable)
 RUN if command -v pip3 >/dev/null 2>&1; then \
-      pip3 install --no-cache-dir --break-system-packages yt-dlp; \
+      pip3 install --no-cache-dir --break-system-packages yt-dlp faster-whisper; \
     elif command -v python3 >/dev/null 2>&1; then \
-      python3 -m pip install --no-cache-dir --break-system-packages yt-dlp; \
+      python3 -m pip install --no-cache-dir --break-system-packages yt-dlp faster-whisper; \
     else \
       echo "ERROR: no pip available for yt-dlp"; exit 1; \
     fi \

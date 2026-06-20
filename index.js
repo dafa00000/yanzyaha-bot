@@ -279,7 +279,12 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     const args = body.slice(PREFIX.length).trim().split(/\s+/)
     const command = args[0]?.toLowerCase()
     const text = args.slice(1).join(' ')
-    console.log(`📩 [${isGroup ? 'Group' : 'Private'}] ${sender.split('@')[0]}: ${body}`)
+    // Log: distinguish group vs private + show full JID (not just numeric prefix)
+    const jidType = isGroup ? 'GROUP' : 'PRIVATE'
+    const fromDisplay = isGroup
+      ? `${from} (sender=${sender.split('@')[0]})`
+      : sender.split('@')[0]
+    console.log(`📩 [${jidType}] ${fromDisplay}: ${body}`)
 
     try {
       switch (command) {
@@ -292,22 +297,65 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
           if (existsSync(vidPath)) {
             await sock.sendMessage(from, {
               video: rfs(vidPath),
-              caption: getMenuText(sender),
+              caption: getMenuText(msg),
               gifPlayback: false
             }, { quoted: msg })
           } else if (existsSync(imgPath)) {
             await sock.sendMessage(from, {
               image: rfs(imgPath),
-              caption: getMenuText(sender)
+              caption: getMenuText(msg)
             }, { quoted: msg })
           } else {
-            await sendText(getMenuText(sender))
+            await sendText(getMenuText(msg))
           }
           break
         }
         case 'ping': {
           const start = Date.now()
           await sendText(`🏓 *Pong!*\n⚡ Respon: ${Date.now() - start}ms`)
+          break
+        }
+        case 'groupid':
+        case 'groupinfo':
+        case 'idgc': {
+          if (!isGroup) {
+            await sendText('⚠️ Command ini cuma buat di dalam grup.')
+            break
+          }
+          // Show group metadata
+          const groupMeta = await sock.groupMetadata(from).catch(() => null)
+          const subject = groupMeta?.subject || '(unknown)'
+          const desc = groupMeta?.desc || '(no description)'
+          const memberCount = groupMeta?.participants?.length || 0
+          const created = groupMeta?.creation ? new Date(groupMeta.creation * 1000).toLocaleDateString('id-ID') : '?'
+          const ownerJid = groupMeta?.owner || '(no owner info)'
+          const senderJid = sender  // JID of person who sent .groupid
+
+          // Try to resolve sender's phone number (works in non-LID groups)
+          let senderDisplay = senderJid
+          if (senderJid.includes('@s.whatsapp.net')) {
+            senderDisplay = senderJid.split('@')[0]
+          } else if (senderJid.includes('@lid')) {
+            // LID — find the actual participant in group to get their phone
+            const real = groupMeta?.participants?.find(p => p.id === senderJid || p.lid === senderJid)
+            if (real?.phoneNumber) senderDisplay = real.phoneNumber.split('@')[0]
+            else senderDisplay = senderJid + ' (LID)'
+          }
+
+          await sendText(
+            `╭─「 🆔 GROUP INFO 」\n` +
+            `│ Subject     : *${subject}*\n` +
+            `│ Group JID   : \`${from}\`\n` +
+            `│ Your JID    : \`${senderJid}\`\n` +
+            `│ Your Phone  : ${senderDisplay}\n` +
+            `│ Members     : ${memberCount}\n` +
+            `│ Created     : ${created}\n` +
+            `│ Owner JID   : \`${ownerJid}\`\n` +
+            `│ Desc        : ${desc.slice(0, 200)}${desc.length > 200 ? '...' : ''}\n` +
+            `╰────────────────\n\n` +
+            `📋 *Copy JID:*\n• Group: \`${from}\`\n• You:   \`${senderJid}\`\n\n` +
+            `ℹ️ Format JID:\n• Group: \`120363...@g.us\`\n• User:  \`628xxx@s.whatsapp.net\` atau \`123@lid\``
+          )
           break
         }
         case 'botinfo':

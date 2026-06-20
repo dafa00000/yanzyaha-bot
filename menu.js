@@ -1,10 +1,31 @@
-export function getMenuText(sender) {
-  const user = sender.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0]
-  return `╭─「 YANZYAHA-BOT 」
+/**
+ * menu.js — renders the bot's command menu.
+ * Context-aware: shows different sections for private chat vs group.
+ *
+ * Called by:
+ *   - handler.js / index.js when user sends `.menu` or `.help`
+ *   - Receives msg object so it can detect isGroup + show group context
+ */
+
+export function getMenuText(msg = null) {
+  const isGroup = !!(msg && msg.key?.remoteJid?.endsWith('@g.us'))
+  const jid = msg?.key?.remoteJid || 'unknown'
+  const sender = msg?.key?.participant || jid
+  const user = (sender || '').split('@')[0].split(':')[0]
+
+  const header = isGroup
+    ? `╭─「 YANZYAHA-BOT 」 (GROUP)
+│ Group  : ${jid}
+│ Kamu   : @${user}
+│ Prefix : .
+╰────────────────`
+    : `╭─「 YANZYAHA-BOT 」
 │ User   : @${user}
 │ Prefix : .
-╰────────────────
+╰────────────────`
 
+  // Sections shown in BOTH private and group
+  const commonSections = `
 ╭─「 📌 INFO 」
 │ ⌬ .ping    » Cek status bot
 │ ⌬ .botinfo » Info bot
@@ -18,29 +39,13 @@ export function getMenuText(sender) {
 │ ◇ Per-user memory (Hermes session)
 ╰────────────────
 
-╭─「 ⚙️ PERSONAL CONFIG (per-user) 」
-│ ◇ Tiap user bisa punya API key / model sendiri
-│ ⌬ .models               » List model dr base_url
-│ ⌬ .setapikey <key>      » Set API key pribadi
-│ ⌬ .setbaseurl <url>     » Set base URL pribadi
-│ ⌬ .setmodel <model>     » Set model pribadi
-│ ⌬ .myconfig             » Lihat config lo
-│ ⌬ .resetmyconfig        » Hapus config custom
-│ ◇ Kosong = pake default Railway
-╰────────────────
-
-╭─「 👑 OWNER CONFIG 」
-│ ⌬ .showconfig           » Global config
-│ ⌬ .resetconfig          » Reset global
-╰────────────────
-
 ╭─「 📥 DOWNLOAD 」
-│ ⌬ .ytdl  [link]            » Video YT
-│ ⌬ .ytmp3 [link]            » Audio YT
-│ ⌬ .ttdl  [link]            » Video TT
-│ ⌬ .autoclip [link YT]      » Auto clip
-│ ⌬ .clip [link] [mulai] [akhir] » Clip
-│ ⌬ .dl [link platform lain] 
+│ ⌬ .ytdl  [link]               » Video YT
+│ ⌬ .ytmp3 [link]               » Audio YT
+│ ⌬ .ttdl  [link]               » Video TT
+│ ⌬ .autoclip [link YT]         » Auto clip + sub Indo
+│ ⌬ .clip [link] [mulai] [akhir]» Clip manual
+│ ⌬ .dl [link platform lain]    » Twitter/IG/FB/Pin
 ╰────────────────
 
 ╭─「 👤 CEK SOSMED 」
@@ -71,12 +76,12 @@ export function getMenuText(sender) {
 ╰────────────────
 
 ╭─「 📊 MARKET & CRYPTO 」
-│ ⌬ .market              » Info pasar
-│ ⌬ .saham [kode]        » Info saham
-│ ⌬ .forex [pair]        » Info forex
-│ ⌬ .crypto [koin]       » Harga crypto
-│ ⌬ .cryptotop           » Top 10 crypto
-│ ⌬ .cryptoprediksi [koin] » Prediksi
+│ ⌬ .market               » Info pasar
+│ ⌬ .saham [kode]         » Info saham
+│ ⌬ .forex [pair]         » Info forex
+│ ⌬ .crypto [koin]        » Harga crypto
+│ ⌬ .cryptotop            » Top 10 crypto
+│ ⌬ .cryptoprediksi [koin]» Prediksi
 ╰────────────────
 
 ╭─「 📨 MENFESS 」
@@ -85,8 +90,35 @@ export function getMenuText(sender) {
 ╰────────────────
 
 ╭─「 📝 LAINNYA 」
+│ ⌬ .groupid  » Info group ID (kalo di grup)
 │ ⌬ .teks [pesan] » Echo pesan
 ╰────────────────`
+
+  // Sections ONLY for private chat (per-user config)
+  const privateOnly = `
+╭─「 ⚙️ PERSONAL CONFIG (per-user) 」
+│ ◇ Tiap user bisa punya API key / model sendiri
+│ ⌬ .models               » List model dr base_url
+│ ⌬ .setapikey <key>      » Set API key pribadi
+│ ⌬ .setbaseurl <url>     » Set base URL pribadi
+│ ⌬ .setmodel <model>     » Set model pribadi
+│ ⌬ .myconfig             » Lihat config lo
+│ ⌬ .resetmyconfig        » Hapus config custom
+│ ◇ Kosong = pake default Railway
+╰────────────────`
+
+  // Sections ONLY for owner (private chat)
+  const ownerOnly = `
+╭─「 👑 OWNER CONFIG 」
+│ ⌬ .showconfig           » Global config
+│ ⌬ .resetconfig          » Reset global
+╰────────────────`
+
+  const footer = isGroup
+    ? '\nℹ️ *Group mode:*\n• AI/download work normal\n• Per-user config = private only\n• `.groupid` buat dapetin ID grup ini'
+    : '\n💡 Tips: Bot otomatis reply chat biasa (ga perlu prefix).'
+
+  return header + commonSections + (isGroup ? '' : privateOnly) + (isGroup ? '' : ownerOnly) + footer
 }
 
-export const menuText = getMenuText('user@s.whatsapp.net')
+export const menuText = getMenuText(null)
