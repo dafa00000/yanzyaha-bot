@@ -286,7 +286,9 @@ async function directChat(prompt, opts = {}) {
     throw new Error('🔑 OPENAI_API_KEY belum di-set.\\n\\nSet di Railway Variables atau `.setapikey <key>`')
   }
 
-  const url = baseUrl.replace(/\\/+$, '') + '/chat/completions'
+  // Strip trailing slash, append /chat/completions (no regex hell)
+  const cleanBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
+  const url = cleanBase + '/chat/completions'
 
   const messages = await loadHistory(opts._sender)
   messages.push({ role: 'user', content: prompt })
