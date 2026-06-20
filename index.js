@@ -16,7 +16,8 @@ import { checkMLProfile, formatMLProfile } from './ml-profile.js'
 import { handleSosmed } from './handler-sosmed.js'
 import { handleDownload } from './handler-download.js'
 import { getMenuText } from './menu.js'
-const { isCommandAllowed, isRestrictedGroup, getAllowedCommands } = require('./restrictions.cjs')
+import restrictions from './restrictions.cjs'
+const { isCommandAllowed, isRestrictedGroup, getAllowedCommands } = restrictions
 import { handleSearch } from './handler-search.js'
 import { handleMenfess } from './handler-menfess.js'
 import { handleCrypto } from './handler-crypto.js'

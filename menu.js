@@ -8,9 +8,8 @@
  * Restrictions config: ./restrictions.cjs (CJS)
  */
 
-import { createRequire } from 'module'
-const require = createRequire(import.meta.url)
-const { isRestrictedGroup, getAllowedCommands } = require('./restrictions.cjs')
+import restrictions from './restrictions.cjs'
+const { isRestrictedGroup, getAllowedCommands } = restrictions
 
 export function getMenuText(msg = null) {
   const isGroup = !!(msg && msg.key?.remoteJid?.endsWith('@g.us'))
