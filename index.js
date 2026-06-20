@@ -494,7 +494,10 @@ case 'download':
         case 'mybaseurl':
         case 'mymodel':
         case 'resetmyconfig':
-        case 'clearmyconfig': {
+        case 'clearmyconfig':
+        case 'apitest':
+        case 'testapikey':
+        case 'checkapi': {
           const handled = await configHandler.handle(sock, msg, body, sender)
           // handle() returns null kalau command ga match → biarin flow lanjut
           if (handled !== null) break

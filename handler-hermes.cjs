@@ -77,6 +77,15 @@ function runHermes(prompt, opts = {}) {
   return new Promise((resolve, reject) => {
     const args = ['chat', '-q', prompt, '-Q', '--source', SOURCE_TAG]
 
+    // Force Hermes to use env vars, not cached config.yaml
+    // Without these, Hermes uses $HERMES_HOME/config.yaml from startup,
+    // which has Railway's OLD (possibly invalid) API key.
+    args.push('--ignore-user-config')
+    args.push('--ignore-rules')
+    // Explicitly select OpenAI-compatible provider so Hermes reads
+    // OPENAI_API_KEY + OPENAI_BASE_URL env vars
+    args.push('--provider', 'openai')
+
     if (opts.resume) args.push('--continue', opts.resume)
     // Resolve model: opts.model > userEnv.HERMES_MODEL > DEFAULT_MODEL (Railway)
     const userModel = (opts.userEnv && opts.userEnv.HERMES_MODEL) || ''
@@ -102,6 +111,16 @@ function runHermes(prompt, opts = {}) {
       for (const [k, v] of Object.entries(opts.userEnv)) {
         if (v != null && v !== '') env[k] = String(v)
       }
+    }
+    // Provide OPENAI_API_KEYS (plural, comma-sep) as fallback
+    if (env.OPENAI_API_KEY && !env.OPENAI_API_KEYS) {
+      env.OPENAI_API_KEYS = env.OPENAI_API_KEY
+    }
+    // If model starts with minimax/, also alias key as MINIMAX_API_KEY
+    // (in case Hermes routes via Minimax direct provider instead of OpenAI-compatible)
+    const modelUsed = (opts.userEnv && opts.userEnv.HERMES_MODEL) || opts.model || DEFAULT_MODEL
+    if (modelUsed && /^minimax\//i.test(modelUsed) && env.OPENAI_API_KEY && !env.MINIMAX_API_KEY) {
+      env.MINIMAX_API_KEY = env.OPENAI_API_KEY
     }
 
     // DEBUG: log effective env (masked) and args
