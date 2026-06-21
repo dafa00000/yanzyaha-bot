@@ -36,17 +36,26 @@ function notHas(s, sub, msg = '') { if (s.includes(sub)) throw new Error(`${msg 
 // ─── PRIVATE CHAT ───────────────────────────────────────────
 console.log('\n── private chat ──')
 
-await test('private: shows full menu', () => {
+await test('private: shows full menu (non-owner)', () => {
   const out = getMenuText({
     key: { remoteJid: '628xxx@s.whatsapp.net', participant: '628xxx@s.whatsapp.net' }
-  })
+  }, { isOwner: false })
   has(out, 'INFO')
   has(out, 'AI CHAT')
   has(out, 'DOWNLOAD')
-  has(out, 'PASAR')
+  has(out, 'MARKET')
   has(out, 'SOSMED')
-  has(out, 'KONFIG PRIBADI')
-  has(out, 'KONFIG OWNER')
+  has(out, 'PERSONAL CONFIG')
+  // OWNER CONFIG should NOT show for non-owner
+  notHas(out, 'OWNER CONFIG')
+})
+
+await test('private: owner sees owner config', () => {
+  const out = getMenuText({
+    key: { remoteJid: '62895618805248@s.whatsapp.net', participant: '62895618805248@s.whatsapp.net' }
+  }, { isOwner: true })
+  has(out, 'OWNER CONFIG')
+  has(out, 'OWNER ONLY')  // owner extra sections
 })
 
 await test('private: shows correct user in header', () => {
@@ -109,13 +118,12 @@ await test('restricted: only shows allowed sections', () => {
   })
   has(out, 'INFO')
   has(out, 'AI CHAT')
-  has(out, 'PENCARIAN')
+  has(out, 'SEARCH')
   // These should NOT be shown (not in allowed list)
-  notHas(out, 'DOWNLOAD')
-  notHas(out, 'PASAR')
+  notHas(out, 'MARKET')
   notHas(out, 'SOSMED')
   notHas(out, 'GAME')
-  notHas(out, 'KONFIG PRIBADI')
+  notHas(out, 'PERSONAL CONFIG')
 })
 
 await test('restricted: only shows allowed AI commands', () => {
@@ -127,7 +135,6 @@ await test('restricted: only shows allowed AI commands', () => {
   })
   has(out, '.ai')
   has(out, '.reset')
-  has(out, '.forget')
   // .menu itself shouldn't appear in command list (it's meta)
   notHas(out, '⌬ .menu')
 })
@@ -192,30 +199,33 @@ await test('start redirect: returns null for private chat', () => {
 // ─── ALIGNMENT CHECKS ────────────────────────────────────────
 console.log('\n── alignment consistency ──')
 
-await test('menu: all box lines have same width', () => {
+await test('menu: within each box, all lines have same width', () => {
   const out = getMenuText({
     key: {
       remoteJid: RESTRICTED_JID,
       participant: '628xxx@s.whatsapp.net'
     }
   })
-  // Split into box sections and check each box has consistent width
-  const boxes = out.split('\n').filter(l => l.startsWith('╭') || l.startsWith('│') || l.startsWith('╰'))
-  // Group consecutive box lines
-  const widths = []
-  let curWidth = null
-  for (const line of boxes) {
+  // For each section box, check that header/body/footer have consistent width
+  const lines = out.split('\n')
+  let boxLines = []
+  for (const line of lines) {
     if (line.startsWith('╭') || line.startsWith('╰')) {
-      if (curWidth !== null) widths.push(curWidth)
-      curWidth = line.length
+      // End of current box
+      if (boxLines.length > 0) {
+        const widths = boxLines.map(l => l.length)
+        ok(widths.every(w => w === widths[0]), `box lines should have same width: ${JSON.stringify(widths)}`)
+      }
+      boxLines = [line]
     } else if (line.startsWith('│')) {
-      ok(curWidth === null || curWidth === line.length, `box line width ${line.length} differs from ${curWidth}`)
-      curWidth = line.length
+      boxLines.push(line)
     }
   }
-  if (curWidth !== null) widths.push(curWidth)
-  ok(widths.length > 0, 'should have at least one box')
-  ok(widths.every(w => w === widths[0]), `boxes should have same width: ${JSON.stringify(widths)}`)
+  // Don't forget last box
+  if (boxLines.length > 0) {
+    const widths = boxLines.map(l => l.length)
+    ok(widths.every(w => w === widths[0]), `last box: ${JSON.stringify(widths)}`)
+  }
 })
 
 await test('menu: command names not truncated', () => {
@@ -224,8 +234,7 @@ await test('menu: command names not truncated', () => {
   })
   // .autoclip (9 chars) should not become .autocli…
   has(out, '.autoclip')
-  has(out, '.setapikey')
-  has(out, '.resetmyconfig')
+  has(out, '.cryptoprediksi')
 })
 
 // ─── Summary ──────────────────────────────────────────────

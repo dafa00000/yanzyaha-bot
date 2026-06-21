@@ -1,249 +1,471 @@
 /**
  * menu.js — render menu command YANZYAHA-BOT
  *
- * Style konsisten (pakai format.cjs):
- *   - Section title: emoji + nama section
- *   - Command format: ⌬ .cmd    » Deskripsi bahasa Indonesia
- *   - Footer: tips + versi bot
+ * Style: ORIGINAL (pre-refactor) — ⌬ .cmd    » desc, narrow box, casual Indo
+ * 3 variant:
+ *   - USER (private, non-restricted) — full menu
+ *   - OWNER — comprehensive dengan 86 command
+ *   - RESTRICTED (grup filtered) — cuma 4 section: INFO, AI, SEARCH, DOWNLOAD
  *
- * Visibility:
- *   - Private chat        : full menu (semua section)
- *   - Group (non-restricted): hampir full, kecuali per-user config
- *   - Group (restricted)  : cuma section yang di-whitelist
+ * Auto-size: lebar box ngikutin konten terpanjang (jadi ga ambur-adul)
  */
 
 import restrictions from './restrictions.cjs'
 const { isRestrictedGroup, getAllowedCommands } = restrictions
 
-import format from './format.cjs'
-// format.cjs is CJS — destructure default + named exports
-const fmt = format.default || format
-
-// ─── SECTION DEFINITIONS ─────────────────────────────────────
-// Definisi terpusat biar gampang diedit. Tiap section punya:
-//   - id: identifier unik
-//   - title: emoji + judul (untuk header section)
-//   - items: [{ cmd, desc, restricted? }] — restricted: hanya muncul kalau diizinkan
-//   - requiresPrivate: kalau true, hanya muncul di private chat
+// ─── SECTION DEFINITIONS ────────────────────────────────────────
+// Setiap section punya title + items array.
+// Items bisa:
+//   - { type: 'cmd', cmd: '.foo', desc: '...' }   → ⌬ .foo » ...
+//   - { type: 'info', text: '◇ ...' }              → ◇ ...
+//
+// Style inspired by ORIGINAL menu (before my refactor):
+// - Bahasa casual Indo (bukan formal)
+// - ⌬ untuk command, ◇ untuk info/note
+// - Per-user memory (private) jalan default, group memory khusus whitelist
 
 const SECTIONS = {
   info: {
     title: '📌 INFO',
     items: [
-      { cmd: '.ping',    desc: 'Cek status bot' },
-      { cmd: '.botinfo', desc: 'Info lengkap bot' },
-      { cmd: '.owner',   desc: 'Kontak owner' },
+      { type: 'cmd', cmd: '.ping', desc: 'Cek status bot' },
+      { type: 'cmd', cmd: '.botinfo', desc: 'Info bot' },
+      { type: 'cmd', cmd: '.owner', desc: 'Kontak owner' },
     ],
   },
   ai: {
-    title: '🤖 AI CHAT',
+    title: '🤖 AI CHAT (Hermes Agent)',
     items: [
-      { cmd: '.ai',     desc: 'Tanya AI (pakai memory)' },
-      { cmd: '.reset',  desc: 'Hapus memory chat ini' },
-      { cmd: '.forget', desc: 'Hapus memory grup ini', groupOnly: true },
-      { cmd: 'chat',    desc: 'Langsung ketik = auto AI (tanpa prefix)' },
+      { type: 'cmd', cmd: '.ai [tanya]', desc: 'Tanya AI' },
+      { type: 'cmd', cmd: '.reset', desc: 'Reset percakapan' },
+      { type: 'info', text: '◇ Chat biasa = auto AI reply' },
+      { type: 'info', text: '◇ Per-user memory (Hermes session)' },
     ],
   },
   search: {
-    title: '🔍 PENCARIAN',
+    title: '🔍 SEARCH & CUACA',
     items: [
-      { cmd: '.search', desc: 'Cari di Google' },
-      { cmd: '.cuaca',  desc: 'Info cuaca kota' },
+      { type: 'cmd', cmd: '.search [query]', desc: 'Cari Google' },
+      { type: 'cmd', cmd: '.cuaca [kota]', desc: 'Info cuaca' },
+    ],
+  },
+  market: {
+    title: '📊 MARKET & CRYPTO',
+    items: [
+      { type: 'cmd', cmd: '.market', desc: 'Info pasar' },
+      { type: 'cmd', cmd: '.saham [kode]', desc: 'Info saham' },
+      { type: 'cmd', cmd: '.forex [pair]', desc: 'Info forex' },
+      { type: 'cmd', cmd: '.crypto [koin]', desc: 'Harga crypto' },
+      { type: 'cmd', cmd: '.cryptotop', desc: 'Top 10 crypto' },
+      { type: 'cmd', cmd: '.cryptoprediksi [koin]', desc: 'Prediksi' },
     ],
   },
   download: {
     title: '📥 DOWNLOAD',
-    // Tampil di private + non-restricted group. Di restricted group, otomatis hidden
-    // (command .ytdl dll ga ada di allowed list mereka)
     items: [
-      { cmd: '.ytdl',     desc: 'Download video YouTube' },
-      { cmd: '.ytmp3',    desc: 'Download audio YouTube' },
-      { cmd: '.ttdl',     desc: 'Download video TikTok' },
-      { cmd: '.autoclip', desc: 'Auto-clip video YT (AI)' },
-      { cmd: '.clip',     desc: 'Clip manual YT (start/end)' },
-      { cmd: '.dl',       desc: 'Twitter/IG/FB/Pin (auto-detect)' },
-    ],
-  },
-  market: {
-    title: '📊 PASAR & CRYPTO',
-    items: [
-      { cmd: '.market',    desc: 'Info pasar (saham/crypto/forex)' },
-      { cmd: '.saham',     desc: 'Info saham (kode: BBCA, TLKM)' },
-      { cmd: '.forex',     desc: 'Info forex (USDIDR, EURUSD)' },
-      { cmd: '.crypto',    desc: 'Harga crypto' },
-      { cmd: '.cryptotop', desc: 'Top 10 crypto' },
+      { type: 'cmd', cmd: '.ytdl [link]', desc: 'Video YT' },
+      { type: 'cmd', cmd: '.ytmp3 [link]', desc: 'Audio YT' },
+      { type: 'cmd', cmd: '.ttdl [link]', desc: 'Video TT' },
+      { type: 'cmd', cmd: '.autoclip [link YT]', desc: 'Auto clip + sub Indo' },
+      { type: 'cmd', cmd: '.clip [link] [mulai] [akhir]', desc: 'Clip manual' },
+      { type: 'cmd', cmd: '.dl [link platform lain]', desc: 'Twitter/IG/FB/Pin' },
     ],
   },
   sosmed: {
     title: '👤 CEK SOSMED',
     items: [
-      { cmd: '.ig',     desc: 'Cek profil Instagram' },
-      { cmd: '.tt',     desc: 'Cek profil TikTok' },
-      { cmd: '.gh',     desc: 'Cek profil GitHub' },
-      { cmd: '.roblox', desc: 'Cek profil Roblox' },
-      { cmd: '.yt',     desc: 'Cari channel YouTube' },
+      { type: 'cmd', cmd: '.ig [user]', desc: 'Instagram' },
+      { type: 'cmd', cmd: '.tt [user]', desc: 'TikTok' },
+      { type: 'cmd', cmd: '.gh [user]', desc: 'GitHub' },
+      { type: 'cmd', cmd: '.roblox [user]', desc: 'Roblox' },
+      { type: 'cmd', cmd: '.yt [nama]', desc: 'YouTube' },
     ],
   },
   ml: {
     title: '🎮 MOBILE LEGENDS',
     items: [
-      { cmd: '.ml',     desc: 'Cek profil ML (ID Zone)' },
-      { cmd: '.mlhelp', desc: 'Panduan cari ID & Zone' },
+      { type: 'cmd', cmd: '.ml [ID] [Zone]', desc: 'Cek profil' },
+      { type: 'cmd', cmd: '.mlhelp', desc: 'Panduan' },
     ],
   },
   game: {
     title: '🎲 GAME',
     items: [
-      { cmd: '.dadu',  desc: 'Lempar dadu' },
-      { cmd: '.koin',  desc: 'Lempar koin' },
-      { cmd: '.suit',  desc: 'Suit (batu/gunting/kertas)' },
-      { cmd: '.tebak', desc: 'Tebak angka' },
-      { cmd: '.kuis',  desc: 'Kuis random' },
+      { type: 'cmd', cmd: '.dadu', desc: 'Lempar dadu' },
+      { type: 'cmd', cmd: '.koin', desc: 'Lempar koin' },
+      { type: 'cmd', cmd: '.suit [pilihan]', desc: 'Suit' },
+      { type: 'cmd', cmd: '.tebak', desc: 'Tebak angka' },
+      { type: 'cmd', cmd: '.kuis', desc: 'Kuis acak' },
+      { type: 'cmd', cmd: '.jawab [jwb]', desc: 'Jawab kuis' },
     ],
   },
   menfess: {
     title: '📨 MENFESS',
     items: [
-      { cmd: '.menfess',  desc: 'Kirim pesan ke grup' },
-      { cmd: '.menfessp', desc: 'Kirim pesan ke user (anonim)' },
+      { type: 'cmd', cmd: '.menfess [pesan]', desc: 'Kirim ke grup' },
+      { type: 'cmd', cmd: '.menfessp [pesan]', desc: 'Kirim private' },
+    ],
+  },
+  others: {
+    title: '📝 LAINNYA',
+    items: [
+      { type: 'cmd', cmd: '.groupid', desc: 'Info group ID (kalo di grup)' },
+      { type: 'cmd', cmd: '.teks [pesan]', desc: 'Echo pesan' },
     ],
   },
   personalConfig: {
-    title: '⚙️ KONFIG PRIBADI',
-    requiresPrivate: true,  // cuma muncul di private chat
+    title: '⚙️ PERSONAL CONFIG (per-user)',
+    requiresPrivate: true,
     items: [
-      { cmd: '.models',        desc: 'Lihat model yang tersedia' },
-      { cmd: '.setapikey',     desc: 'Set API key pribadi' },
-      { cmd: '.setbaseurl',    desc: 'Set base URL pribadi' },
-      { cmd: '.setmodel',      desc: 'Set model pribadi' },
-      { cmd: '.myconfig',      desc: 'Lihat konfig lo' },
-      { cmd: '.resetmyconfig', desc: 'Hapus konfig custom' },
+      { type: 'info', text: '◇ Tiap user bisa punya API key / model sendiri' },
+      { type: 'cmd', cmd: '.models', desc: 'List model dr base_url' },
+      { type: 'cmd', cmd: '.setapikey <key>', desc: 'Set API key pribadi' },
+      { type: 'cmd', cmd: '.setbaseurl <url>', desc: 'Set base URL pribadi' },
+      { type: 'cmd', cmd: '.setmodel <model>', desc: 'Set model pribadi' },
+      { type: 'cmd', cmd: '.myconfig', desc: 'Lihat config lo' },
+      { type: 'cmd', cmd: '.resetmyconfig', desc: 'Hapus config custom' },
+      { type: 'info', text: '◇ Kosong = pake default Railway' },
     ],
   },
   ownerConfig: {
-    title: '👑 KONFIG OWNER',
-    requiresPrivate: true,
+    title: '👑 OWNER CONFIG',
+    ownerOnly: true,
     items: [
-      { cmd: '.showconfig',  desc: 'Lihat konfig global' },
-      { cmd: '.resetconfig', desc: 'Reset konfig global' },
-      { cmd: '.memory',      desc: 'Lihat memory grup (owner)' },
+      { type: 'cmd', cmd: '.showconfig', desc: 'Global config' },
+      { type: 'cmd', cmd: '.resetconfig', desc: 'Reset global' },
     ],
   },
 }
 
-// ─── RENDER LOGIC ─────────────────────────────────────────────
-function shouldShowSection(sectionKey, section, ctx) {
-  const { isGroup, isRestricted, jid, isPrivateOwner, isPrivate } = ctx
-  const allowed = isRestricted ? (getAllowedCommands(jid) || []) : null
-
-  // requiresPrivate: only private chat
-  if (section.requiresPrivate && !isPrivate && !isPrivateOwner) return false
-
-  // privateOnly section: only private chat
-  if (section.privateOnly && !isPrivate && !isPrivateOwner) return false
-
-  // Filter items based on context
-  let visibleItems
-  if (isRestricted) {
-    // Restricted group: hanya command yang ada di allowed list
-    visibleItems = section.items.filter(it => {
-      if (it.cmd === 'chat') return false  // 'chat' cuma pseudo-command, jangan tampil
-      const cmd = it.cmd.replace('.', '')
-      return allowed.includes(cmd)
-    })
-  } else if (isGroup) {
-    // Non-restricted group: tampilkan semua KECUALI privateOnly items
-    visibleItems = section.items.filter(it => {
-      if (it.cmd === 'chat') return true  // no-prefix chat works in group too
-      if (it.privateOnly) return false
-      return true
-    })
-  } else {
-    // Private chat: tampilkan semua
-    visibleItems = section.items.filter(it => {
-      if (it.cmd === 'chat') return true  // pseudo-command, useful untuk user
-      return true
-    })
-  }
-
-  // Apply groupOnly filter (cuma muncul di group, bukan private)
-  if (!isGroup) {
-    visibleItems = visibleItems.filter(it => !it.groupOnly)
-  }
-
-  if (visibleItems.length === 0) return false
-  section._visibleItems = visibleItems
-  return true
+// Sections tambahan khusus OWNER
+const OWNER_EXTRA_SECTIONS = {
+  ownerAdmin: {
+    title: '👑 OWNER ONLY',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.run [shell]', desc: 'Eksekusi shell command' },
+      { type: 'cmd', cmd: '.banned [nomor]', desc: 'Ban user' },
+      { type: 'cmd', cmd: '.unban [nomor]', desc: 'Unban user' },
+      { type: 'cmd', cmd: '.users', desc: 'Daftar user' },
+      { type: 'cmd', cmd: '.restart', desc: 'Restart bot' },
+      { type: 'cmd', cmd: '.update', desc: 'Update bot' },
+      { type: 'cmd', cmd: '.memory', desc: 'Lihat memory grup' },
+      { type: 'cmd', cmd: '.forget', desc: 'Hapus memory grup' },
+    ],
+  },
+  ownerML: {
+    title: '⚔️ ML (lengkap)',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.ml [id] [zone]', desc: 'Profil ML' },
+      { type: 'cmd', cmd: '.mlacc / .mltaut', desc: 'Akun terikat ML' },
+      { type: 'cmd', cmd: '.mlzone', desc: 'Zone server' },
+      { type: 'cmd', cmd: '.mlmenu', desc: 'Menu info ML' },
+      { type: 'cmd', cmd: '.mlinfo', desc: 'Info detail ML' },
+      { type: 'cmd', cmd: '.cekml', desc: 'Alias .ml' },
+      { type: 'cmd', cmd: '.mlhelp', desc: 'Panduan ML' },
+    ],
+  },
+  ownerDownload: {
+    title: '📥 DOWNLOAD (lengkap)',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.ytdl [link]', desc: 'Video YouTube' },
+      { type: 'cmd', cmd: '.ytmp3 [link]', desc: 'Audio YouTube' },
+      { type: 'cmd', cmd: '.ttdl [link]', desc: 'Video TikTok' },
+      { type: 'cmd', cmd: '.twdl [link]', desc: 'Video Twitter/X' },
+      { type: 'cmd', cmd: '.xdl [link]', desc: 'Alias .twdl' },
+      { type: 'cmd', cmd: '.pindl [link]', desc: 'Pinterest' },
+      { type: 'cmd', cmd: '.igdl [link]', desc: 'Instagram' },
+      { type: 'cmd', cmd: '.fbdl [link]', desc: 'Facebook' },
+      { type: 'cmd', cmd: '.dl [link]', desc: 'Auto-detect' },
+      { type: 'cmd', cmd: '.download [link]', desc: 'Alias .dl' },
+      { type: 'cmd', cmd: '.autoclip', desc: 'Auto clip YT' },
+      { type: 'cmd', cmd: '.clip', desc: 'Clip manual' },
+    ],
+  },
+  ownerAI: {
+    title: '🤖 AI (lengkap)',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.ai / .grok', desc: 'Tanya AI' },
+      { type: 'cmd', cmd: '.reset', desc: 'Hapus riwayat pribadi' },
+      { type: 'cmd', cmd: '.forget', desc: 'Hapus riwayat grup' },
+      { type: 'cmd', cmd: '.memory', desc: 'Statistik memory grup' },
+      { type: 'cmd', cmd: 'chat langsung', desc: 'Auto AI reply' },
+    ],
+  },
+  ownerSearch: {
+    title: '🔍 CARI (lengkap)',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.search / .ddg', desc: 'Google search' },
+      { type: 'cmd', cmd: '.cuaca / .weather', desc: 'Cuaca kota' },
+      { type: 'cmd', cmd: '.searchhelp', desc: 'Panduan search' },
+    ],
+  },
+  ownerPasar: {
+    title: '📊 PASAR (lengkap)',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.market', desc: 'Info pasar' },
+      { type: 'cmd', cmd: '.saham [kode]', desc: 'Saham ID' },
+      { type: 'cmd', cmd: '.forex [pair]', desc: 'Forex' },
+      { type: 'cmd', cmd: '.ta [pair]', desc: 'Analisa teknikal' },
+      { type: 'cmd', cmd: '.crypto [nama]', desc: 'Harga crypto' },
+      { type: 'cmd', cmd: '.cryptotop', desc: 'Top 10 crypto' },
+      { type: 'cmd', cmd: '.cryptoprediksi [koin]', desc: 'Prediksi trend' },
+    ],
+  },
+  ownerSosmed: {
+    title: '👤 SOSMED (lengkap)',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.ig [user]', desc: 'Instagram' },
+      { type: 'cmd', cmd: '.tt [user]', desc: 'TikTok' },
+      { type: 'cmd', cmd: '.gh [user]', desc: 'GitHub' },
+      { type: 'cmd', cmd: '.roblox [user]', desc: 'Roblox' },
+      { type: 'cmd', cmd: '.yt [nama]', desc: 'YouTube' },
+    ],
+  },
+  ownerGame: {
+    title: '🎲 GAME (lengkap)',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.game', desc: 'Game random' },
+      { type: 'cmd', cmd: '.dadu', desc: 'Lempar dadu' },
+      { type: 'cmd', cmd: '.koin', desc: 'Lempar koin' },
+      { type: 'cmd', cmd: '.suit [pilihan]', desc: 'Suit' },
+      { type: 'cmd', cmd: '.tebak', desc: 'Tebak angka' },
+      { type: 'cmd', cmd: '.kuis', desc: 'Kuis acak' },
+      { type: 'cmd', cmd: '.jawab [jawaban]', desc: 'Jawab kuis' },
+    ],
+  },
+  ownerMenfess: {
+    title: '📨 MENFESS (lengkap)',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.menfess [pesan]', desc: 'Anonim ke grup' },
+      { type: 'cmd', cmd: '.menfessp [pesan]', desc: 'Anonim ke user' },
+    ],
+  },
+  ownerImage: {
+    title: '🎨 IMAGE',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.imagine [prompt]', desc: 'Generate gambar AI' },
+      { type: 'cmd', cmd: '.img', desc: 'Alias .imagine' },
+      { type: 'cmd', cmd: '.generate / .gen', desc: 'Alias .imagine' },
+    ],
+  },
+  ownerGroup: {
+    title: '🆔 GROUP INFO',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.groupid', desc: 'Info group' },
+      { type: 'cmd', cmd: '.groupinfo', desc: 'Alias .groupid' },
+      { type: 'cmd', cmd: '.idgc', desc: 'Alias .groupid' },
+    ],
+  },
+  ownerConfig: {
+    title: '🔐 KONFIG PRIBADI (lengkap)',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.models', desc: 'List model AI' },
+      { type: 'cmd', cmd: '.setapikey', desc: 'Set API key' },
+      { type: 'cmd', cmd: '.setkey', desc: 'Alias .setapikey' },
+      { type: 'cmd', cmd: '.setbaseurl', desc: 'Set base URL' },
+      { type: 'cmd', cmd: '.seturl', desc: 'Alias .setbaseurl' },
+      { type: 'cmd', cmd: '.setmodel', desc: 'Set model AI' },
+      { type: 'cmd', cmd: '.myconfig', desc: 'Lihat config' },
+      { type: 'cmd', cmd: '.mycfg', desc: 'Alias .myconfig' },
+      { type: 'cmd', cmd: '.myapikey', desc: 'Lihat API key' },
+      { type: 'cmd', cmd: '.mybaseurl', desc: 'Lihat base URL' },
+      { type: 'cmd', cmd: '.mymodel', desc: 'Lihat model' },
+      { type: 'cmd', cmd: '.apitest', desc: 'Test API' },
+      { type: 'cmd', cmd: '.testapikey', desc: 'Alias .apitest' },
+      { type: 'cmd', cmd: '.checkapi', desc: 'Alias .apitest' },
+      { type: 'cmd', cmd: '.resetmyconfig', desc: 'Hapus config pribadi' },
+      { type: 'cmd', cmd: '.clearmyconfig', desc: 'Alias .resetmyconfig' },
+    ],
+  },
+  ownerMisc: {
+    title: '🔧 MISC',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.start', desc: 'Menu / redirect' },
+      { type: 'cmd', cmd: '.menu / .help', desc: 'Tampilin menu' },
+      { type: 'cmd', cmd: '.ping', desc: 'Cek status' },
+      { type: 'cmd', cmd: '.botinfo', desc: 'Info bot' },
+      { type: 'cmd', cmd: '.owner', desc: 'Kontak owner' },
+      { type: 'cmd', cmd: '.teks [pesan]', desc: 'Echo pesan' },
+      { type: 'cmd', cmd: '.forget', desc: 'Hapus memory grup' },
+    ],
+  },
 }
 
-// ─── MAIN ENTRY ───────────────────────────────────────────────
+// Sections khusus RESTRICTED GROUP (cuma 4: INFO, AI, SEARCH, DOWNLOAD)
+const RESTRICTED_SECTIONS = ['info', 'ai', 'search', 'download']
+
+// ─── RENDER ENGINE ────────────────────────────────────────────
+// Render section dengan auto-sized box (lebar ngikutin konten terpanjang)
+// Style: ╭─「 TITLE 」───╮
+//        │ cmd » desc        │
+//        ╰────────────╯
+
+function renderItem(item) {
+  if (item.type === 'info') return item.text
+  // Pad cmd dengan 2 trailing spaces (atau sampe 18 char) buat align
+  const paddedCmd = item.cmd.padEnd(18)
+  return '⌬ ' + paddedCmd + ' » ' + item.desc
+}
+
+function renderSection(section) {
+  // Build content lines (no border chars yet)
+  const contentLines = section.items.map(renderItem)
+
+  // titlePart panjang jadi acuan box width
+  const titlePart = '「 ' + section.title + ' 」'
+  // innerContentWidth = panjang maksimal baris content (atau titlePart)
+  const innerContentWidth = Math.max(
+    titlePart.length,
+    ...contentLines.map(l => l.length)
+  )
+
+  // BOX_WIDTH = innerContentWidth + 4 (untuk │ + spasi di body)
+  // Semua baris (header, body, footer) akan punya BOX_WIDTH char
+  const boxWidth = innerContentWidth + 4
+
+  // Header: ╭─「 TITLE 」─...─╮  (total BOX_WIDTH)
+  const headerDashCount = Math.max(2, boxWidth - 3 - titlePart.length)
+  const header = '╭─' + titlePart + '─'.repeat(headerDashCount) + '╮'
+
+  // Body: │ <content padded> │  (total BOX_WIDTH)
+  const body = contentLines.map(line => {
+    const padded = line + ' '.repeat(innerContentWidth - line.length)
+    return '│ ' + padded + ' │'
+  })
+
+  // Footer: ╰─...─╯  (total BOX_WIDTH)
+  const footerDashCount = boxWidth - 2
+  const footer = '╰' + '─'.repeat(footerDashCount) + '╯'
+
+  return [header, ...body, footer].join('\n')
+}
+
+function renderHeader(jid, sender, isGroup = false) {
+  const user = (sender || jid || '').split('@')[0].split(':')[0]
+  if (isGroup) {
+    return renderSection({
+      title: 'YANZYAHA-BOT',
+      items: [
+        { type: 'info', text: 'Group  : ' + (jid || '-') },
+        { type: 'info', text: 'Kamu   : @' + user },
+        { type: 'info', text: 'Prefix : .' },
+      ],
+    })
+  }
+  return renderSection({
+    title: 'YANZYAHA-BOT',
+    items: [
+      { type: 'info', text: 'User   : @' + user },
+      { type: 'info', text: 'Prefix : .' },
+    ],
+  })
+}
+
+// ─── FILTER LOGIC ──────────────────────────────────────────────
+// Filter items per section sesuai context:
+// - Restricted group: cuma section yang di-whitelist (4 sections)
+// - Private: tampilkan semua EXCEPT ownerOnly (kecuali owner)
+
+function getSectionsForContext(ctx) {
+  const { isGroup, isRestricted, jid, isOwner, isPrivate } = ctx
+
+  // Restricted group: cuma 4 sections
+  if (isRestricted) {
+    return RESTRICTED_SECTIONS.map(k => SECTIONS[k]).filter(Boolean)
+  }
+
+  // Private atau group biasa: tampilkan semua section kecuali ownerOnly (kecuali owner)
+  const result = []
+  for (const [key, section] of Object.entries(SECTIONS)) {
+    if (section.ownerOnly && !isOwner) continue
+    if (section.requiresPrivate && !isPrivate) continue
+    result.push(section)
+  }
+
+  // Untuk owner, tambahin section tambahan
+  if (isOwner) {
+    result.push(OWNER_EXTRA_SECTIONS.ownerMisc)
+    result.push(OWNER_EXTRA_SECTIONS.ownerAI)
+    result.push(OWNER_EXTRA_SECTIONS.ownerSearch)
+    result.push(OWNER_EXTRA_SECTIONS.ownerDownload)
+    result.push(OWNER_EXTRA_SECTIONS.ownerPasar)
+    result.push(OWNER_EXTRA_SECTIONS.ownerSosmed)
+    result.push(OWNER_EXTRA_SECTIONS.ownerML)
+    result.push(OWNER_EXTRA_SECTIONS.ownerGame)
+    result.push(OWNER_EXTRA_SECTIONS.ownerMenfess)
+    result.push(OWNER_EXTRA_SECTIONS.ownerImage)
+    result.push(OWNER_EXTRA_SECTIONS.ownerGroup)
+    result.push(OWNER_EXTRA_SECTIONS.ownerConfig)
+    result.push(OWNER_EXTRA_SECTIONS.ownerAdmin)
+  }
+
+  return result
+}
+
+// ─── MAIN ENTRY: getMenuText ────────────────────────────────────
 export function getMenuText(msg = null, opts = {}) {
   const isGroup = !!(msg && msg.key?.remoteJid?.endsWith('@g.us'))
   const jid = msg?.key?.remoteJid || 'unknown'
   const sender = msg?.key?.participant || jid
-  const user = (sender || '').split('@')[0].split(':')[0]
   const isRestricted = isRestrictedGroup(jid)
   const isPrivate = !isGroup
-  const isPrivateOwner = isPrivate && opts.isOwner  // optional hint
+  const isOwner = !!opts.isOwner
 
-  const ctx = { isGroup, isRestricted, jid, isPrivateOwner, isPrivate }
+  const ctx = { isGroup, isRestricted, jid, isOwner, isPrivate }
 
-  // ─── HEADER ─────────────────────────────────────────────
-  const headerOut = fmt.header({
-    name: 'YANZYAHA-BOT',
-    jid,
-    senderJid: sender,
-    isGroup,
-    prefix: '.',
-  })
+  // Header
+  const headerOut = renderHeader(jid, sender, isGroup)
 
-  // ─── SECTIONS ───────────────────────────────────────────
-  const sectionOuts = []
-  for (const [key, section] of Object.entries(SECTIONS)) {
-    if (!shouldShowSection(key, section, ctx)) continue
-    sectionOuts.push(fmt.section(section.title, section._visibleItems))
-  }
+  // Sections
+  const sections = getSectionsForContext(ctx)
+  const sectionOuts = sections.map(renderSection)
 
-  // ─── FOOTER + TIPS ─────────────────────────────────────
-  let footerText = ''
+  // Footer message (bedasarkan context)
+  let footerText
   if (isRestricted) {
     const allowed = getAllowedCommands(jid) || []
-    const hidden = sectionOuts.length === 0
-      ? 'Hanya command tertentu yang aktif di grup ini.'
-      : `Total command diizinkan: ${countAllowedItems(ctx)}.`
-    footerText = `🔒 Grup ini restricted. ${hidden} Minta owner buat akses lebih.`
+    footerText = `🔒 Grup ini restricted. Total command diizinkan: ${countAllowedItems(ctx)}. Minta owner buat akses lebih.`
   } else if (isGroup) {
-    footerText = 'ℹ️ Bot inget chat grup ini seperti Meta AI — konteks lengkap tersimpan otomatis.'
+    footerText = 'ℹ️ Chat biasa = auto AI reply.'
   } else {
-    footerText = '💡 Chat biasa (tanpa prefix) langsung dijawab AI. Memory per-user aktif.'
+    footerText = '💡 Tips: Bot otomatis reply chat biasa (ga perlu prefix).'
   }
 
-  const versionFooter = `YANZYAHA-BOT v2.2.0 · Powered by Baileys + Hermes Agent 🧠`
-
-  return [
-    headerOut,
-    sectionOuts.join('\n\n'),
-    footerText,
-    versionFooter,
-  ].filter(Boolean).join('\n\n')
+  return [headerOut, ...sectionOuts, footerText].join('\n\n')
 }
 
 function countAllowedItems(ctx) {
-  const { isRestricted, jid } = ctx
-  if (!isRestricted) return 0
-  const allowed = new Set(getAllowedCommands(jid) || [])
+  // Count sections × items yang visible di restricted group
+  const allowed = new Set(getAllowedCommands(ctx.jid) || [])
   let count = 0
-  for (const section of Object.values(SECTIONS)) {
+  for (const section of RESTRICTED_SECTIONS.map(k => SECTIONS[k]).filter(Boolean)) {
     for (const it of section.items) {
-      const cmd = it.cmd.replace('.', '')
-      if (it.restricted ? allowed.has(cmd) : true) count++
+      if (it.type === 'cmd') {
+        const cmd = it.cmd.split(/\s/)[0].replace(/^\./, '')  // ".search" -> "search"
+        if (allowed.has(cmd)) count++
+      } else if (it.type === 'info') {
+        count++  // info lines counted
+      }
     }
   }
   return count
 }
 
-// ─── START REDIRECT MESSAGE ───────────────────────────────────
-// Pesan yang dikirim kalau user di restricted group ketik .start
+// ─── START REDIRECT ────────────────────────────────────────────
+// Untuk .start di restricted group
 export function getStartRedirectText(jid) {
   const isRestricted = isRestrictedGroup(jid)
   if (!isRestricted) return null  // caller should show full menu
@@ -253,12 +475,10 @@ export function getStartRedirectText(jid) {
     'Bot ini punya banyak command, tapi di grup ini cuma',
     'beberapa yang bisa dipake (sesuai aturan grup).',
     '',
-    '📋 Ketik *.menu* buat liat daftar lengkap command',
-    'yang tersedia buat lo ya kak 😊',
-    '',
-    fmt.footer('Powered by YANZYAHA-BOT 🧠'),
+    '📋 Ketik *.menu* buat liat command yang',
+    'tersedia buat lo ya kak 😊',
   ].join('\n')
 }
 
-// Backward-compat export (untuk tests & existing callers)
+// Backward-compat export
 export const menuText = getMenuText(null)
