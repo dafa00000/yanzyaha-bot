@@ -6,7 +6,13 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "node --experimental-loader ./tests/stub-loader.mjs tests/autodl.test.mjs"
+    "test": "node tests/autodl.test.mjs && node tests/format.test.mjs && node tests/memory.test.mjs && node tests/menu.test.mjs && node tests/bridge.test.mjs && node tests/smoke-integration.test.mjs",
+    "test:autodl": "node tests/autodl.test.mjs",
+    "test:format": "node tests/format.test.mjs",
+    "test:memory": "node tests/memory.test.mjs",
+    "test:menu": "node tests/menu.test.mjs",
+    "test:bridge": "node tests/bridge.test.mjs",
+    "test:smoke": "node tests/smoke-integration.test.mjs"
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",

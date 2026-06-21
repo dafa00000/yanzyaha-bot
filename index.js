@@ -15,9 +15,12 @@ import 'dotenv/config'
 import { checkMLProfile, formatMLProfile } from './ml-profile.js'
 import { handleSosmed } from './handler-sosmed.js'
 import { handleDownload } from './handler-download.js'
-import { getMenuText } from './menu.js'
+import { getMenuText, getStartRedirectText } from './menu.js'
 import restrictions from './restrictions.cjs'
 const { isCommandAllowed, isRestrictedGroup, getAllowedCommands } = restrictions
+const memoryModule = (() => { try { return require('./memory.cjs') } catch (_) { return null } })()
+const bridge = (() => { try { return require('./handler-hermes-bridge.cjs') } catch (_) { return null } })()
+const sec = (() => { try { return require('./security.cjs') } catch (_) { return null } })()
 import { handleSearch } from './handler-search.js'
 import { handleMenfess } from './handler-menfess.js'
 import { handleCrypto } from './handler-crypto.js'
@@ -51,6 +54,13 @@ const aiUpdate = require('./handler-ai-update.cjs')
 const hermesHandler = require('./handler-hermes.cjs')
 const configHandler = require('./handler-config.cjs')
 const botConfig = require('./config.cjs')
+const format = require('./format.cjs')
+
+// Bot version & metadata
+const BOT_VERSION = '2.2.0'
+const BOT_NAME = 'YANZYAHA-BOT'
+const BOT_LIBRARY = 'Baileys'
+const BOT_AI_ENGINE = 'Hermes Agent'
 
 // Load runtime config overrides dari $HERMES_HOME/config.json
 configHandler.loadConfig()
@@ -304,6 +314,50 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     }
     // ================== END AUTO-DOWNLOAD ==================
 
+    // ================== GROUP MEMORY (Meta AI style) ==================
+    // Untuk grup di MEMORY_GROUPS whitelist:
+    //   - Auto-record semua pesan
+    //   - Saat bot di-@ atau user pakai .ai, bot respond pakai group context
+    if (isGroup && memoryModule && memoryModule.MEMORY_GROUPS.has(from)) {
+      // Record (non-blocking, error ga boleh stop flow lain)
+      memoryModule.appendMessage(from, {
+        sender,
+        pushName: msg.pushName || null,
+        body,
+        isBot: false,
+      }).catch(e => console.error('[MEMORY] record:', e.message))
+
+      // Detect @bot atau .ai command
+      const mentioned = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || []
+      const botNumber = (sock.user?.id || '').split(':')[0]
+      const isMentioned = botNumber && mentioned.some(j => (j || '').includes(botNumber))
+      const lowerBody = (body || '').toLowerCase().trim()
+      const hasAiCmd = lowerBody === '.ai' || lowerBody.startsWith('.ai ')
+
+      if ((isMentioned || hasAiCmd) && bridge) {
+        let prompt = body
+        if (hasAiCmd) prompt = body.replace(/^\.ai\s*/i, '').trim() || 'halo'
+
+        // Skip kalau ini URL (sudah di-handle autodl)
+        const isUrl = /^https?:\/\/\S+$/i.test(prompt.trim())
+        if (!isUrl && prompt) {
+          try {
+            const userEnv = configHandler.getEffectiveEnv(sender)
+            const reply = await bridge.handleGroupChat(sock, msg, prompt, sender, userEnv)
+            if (reply) {
+              await sendText(sec ? sec.redactSecrets(reply.slice(0, 4000)) : reply.slice(0, 4000))
+              return
+            }
+          } catch (e) {
+            console.error('[GROUP-CHAT]', e.message)
+            await sendText('❌ ' + (sec ? sec.redactSecrets(e.message) : e.message))
+            return
+          }
+        }
+      }
+    }
+    // ================== END GROUP MEMORY ==================
+
     // ================== AI CHAT (Hermes Agent) ==================
     // Chat bebas di private chat → spawn Hermes subprocess.
     // Memory per-user via --resume session (persist di $HERMES_HOME).
@@ -379,56 +433,63 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
           // Show group metadata
           const groupMeta = await sock.groupMetadata(from).catch(() => null)
           const subject = groupMeta?.subject || '(unknown)'
-          const desc = groupMeta?.desc || '(no description)'
+          const desc = groupMeta?.desc || '(tidak ada deskripsi)'
           const memberCount = groupMeta?.participants?.length || 0
-          const created = groupMeta?.creation ? new Date(groupMeta.creation * 1000).toLocaleDateString('id-ID') : '?'
-          const ownerJid = groupMeta?.owner || '(no owner info)'
-          const senderJid = sender  // JID of person who sent .groupid
+          const created = groupMeta?.creation
+            ? new Date(groupMeta.creation * 1000).toLocaleDateString('id-ID', {
+                day: 'numeric', month: 'long', year: 'numeric',
+              })
+            : '?'
+          const ownerJid = groupMeta?.owner || '(tidak ada info owner)'
+          const senderJid = sender
 
           // Try to resolve sender's phone number (works in non-LID groups)
           let senderDisplay = senderJid
           if (senderJid.includes('@s.whatsapp.net')) {
             senderDisplay = senderJid.split('@')[0]
           } else if (senderJid.includes('@lid')) {
-            // LID — find the actual participant in group to get their phone
             const real = groupMeta?.participants?.find(p => p.id === senderJid || p.lid === senderJid)
             if (real?.phoneNumber) senderDisplay = real.phoneNumber.split('@')[0]
             else senderDisplay = senderJid + ' (LID)'
           }
 
-          await sendText(
-            `╭─「 🆔 GROUP INFO 」\n` +
-            `│ Subject     : *${subject}*\n` +
-            `│ Group JID   : \`${from}\`\n` +
-            `│ Your JID    : \`${senderJid}\`\n` +
-            `│ Your Phone  : ${senderDisplay}\n` +
-            `│ Members     : ${memberCount}\n` +
-            `│ Created     : ${created}\n` +
-            `│ Owner JID   : \`${ownerJid}\`\n` +
-            `│ Desc        : ${desc.slice(0, 200)}${desc.length > 200 ? '...' : ''}\n` +
-            `╰────────────────\n\n` +
-            `📋 *Copy JID:*\n• Group: \`${from}\`\n• You:   \`${senderJid}\`\n\n` +
-            `ℹ️ Format JID:\n• Group: \`120363...@g.us\`\n• User:  \`628xxx@s.whatsapp.net\` atau \`123@lid\``
-          )
+          const out = format.box('🆔 ' + subject, [
+            { emoji: '👥', label: 'Members', value: memberCount + ' orang' },
+            { emoji: '👤', label: 'Owner', value: ownerJid.split('@')[0] },
+            { emoji: '📅', label: 'Dibuat', value: created },
+            { emoji: '📝', label: 'Desc', value: desc.slice(0, 200) + (desc.length > 200 ? '…' : '') },
+          ]) +
+          '\n\n' +
+          `📋 *Copy JID:*\n• Group: \`${from}\`\n• You:   \`${senderJid}\`` +
+          '\n\n' +
+          format.footer(`Phone kamu: ${senderDisplay}`)
+
+          await sendText(out)
           break
         }
-        case 'botinfo':
-          await sendText(
-            `◈━━━━━━━━━━━━━━━━━━━━━━━━◈\n` +
-            `      ⚡ *YANZYAHA-BOT* ⚡\n` +
-            `◈━━━━━━━━━━━━━━━━━━━━━━━━◈\n\n` +
-            `╭────────────────────────╮\n` +
-            `│ 📌 *Prefix  :* ${PREFIX}              │\n` +
-            `│ 👤 *Owner   :* wa.me/${OWNER} │\n` +
-            `│ ⚙️  *Library :* Baileys        │\n` +
-            `│ 🤖 *Model   :* Llama 3.3 70B  │\n` +
-            `│ 🟢 *Status  :* Online          │\n` +
-            `│ 📦 *Versi   :* 2.1.0           │\n` +
-            `╰────────────────────────╯\n\n` +
-            `_Powered by YANZYAHA-BOT_ ⚡` +
-            `_AI Powered by Hermes Agent_ 🧠`
-          )
+        case 'botinfo': {
+          // Dynamic values — jangan hardcode!
+          const activeModel = process.env.HERMES_MODEL
+            || configHandler.getEffectiveEnv(sender)?.HERMES_MODEL
+            || 'MiniMax-M3'
+          const uptimeSec = Math.floor(process.uptime())
+          const uptimeStr = uptimeSec < 60
+            ? `${uptimeSec}d`
+            : uptimeSec < 3600
+              ? `${Math.floor(uptimeSec / 60)}m`
+              : `${Math.floor(uptimeSec / 3600)}j ${Math.floor((uptimeSec % 3600) / 60)}m`
+
+          const out = format.box('⚡ ' + BOT_NAME, [
+            { emoji: '📌', label: 'Prefix', value: PREFIX },
+            { emoji: '👤', label: 'Owner', value: 'wa.me/' + OWNER },
+            { emoji: '⚙️', label: 'Library', value: BOT_LIBRARY },
+            { emoji: '🤖', label: 'Model', value: activeModel },
+            { emoji: '🟢', label: 'Status', value: `Online · ${uptimeStr}` },
+            { emoji: '📦', label: 'Versi', value: BOT_VERSION },
+          ])
+          await sendText(out + format.footer(`Powered by ${BOT_NAME} + ${BOT_AI_ENGINE} 🧠`))
           break
+        }
         case 'owner':
           await sendText(`👤 *Owner Bot*\nwa.me/${OWNER}`)
           break
@@ -571,14 +632,78 @@ case 'download':
           break
                 // ==================== AI CHAT (.ai alias untuk chat biasa) ====================
         // .ai dan .grok sekarang SAMA dengan chat bebas (handleChat).
-        // Tidak ada command khusus lagi - semua chat lewat direct API + memory.
+        // Untuk grup di MEMORY_GROUPS, pakai bridge (group context).
+        // Untuk private / grup biasa, pakai handler-hermes (per-user memory).
         case 'ai':
         case 'grok': {
           const queryText = text || (body.split(/\s+/).slice(1).join(' '))
           if (!queryText.trim()) return sendText(`Contoh: ${PREFIX}ai halo apa kabar?`)
+          if (isGroup && bridge && memoryModule && memoryModule.MEMORY_GROUPS.has(from)) {
+            // Group with memory: pakai bridge untuk group context
+            try {
+              const userEnv = configHandler.getEffectiveEnv(sender)
+              const reply = await bridge.handleGroupChat(sock, msg, queryText, sender, userEnv)
+              if (reply) await sendText(sec ? sec.redactSecrets(reply.slice(0, 4000)) : reply.slice(0, 4000))
+            } catch (e) {
+              await sendText('❌ ' + (sec ? sec.redactSecrets(e.message) : e.message))
+            }
+            return
+          }
           const userEnv = configHandler.getEffectiveEnv(sender)
           await hermesHandler.handleChat(sock, msg, queryText, sender, userEnv)
           return
+        }
+
+        // ==================== MEMORY COMMANDS ====================
+        // .start — di restricted group: redirect ke .menu. Di tempat lain: tampilkan menu.
+        case 'start': {
+          if (isGroup && isRestrictedGroup(from)) {
+            const txt = getStartRedirectText(from)
+            if (txt) {
+              await sendText(txt)
+              return
+            }
+          }
+          // Fallback: tampilkan menu
+          const senderNum = (sender || '').split('@')[0].split(':')[0]
+          await sendText(getMenuText(msg, { isOwner: OWNER_LIDS.includes(senderNum) }))
+          break
+        }
+
+        // .forget — hapus memory (group atau private)
+        case 'forget': {
+          if (isGroup && bridge) {
+            await bridge.handleGroupReset(from)
+            await sendText('🧹 *Memory grup ini udah dihapus!* ✅\n\nBot bakal mulai inget chat dari nol lagi ya kak.')
+          } else {
+            // Private: pakai handler-hermes.reset
+            await hermesHandler.handleReset(sock, msg, sender)
+          }
+          break
+        }
+
+        // .memory — owner-only debug: liat memory stats
+        case 'memory': {
+          const senderNum = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(senderNum)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            return
+          }
+          if (isGroup && bridge && memoryModule) {
+            const txt = await bridge.handleGroupMemory(from)
+            await sendText(txt)
+          } else if (memoryModule) {
+            const stats = await memoryModule.getStats(sender)
+            const out = format.box('🧠 Memory Private', [
+              { emoji: '📊', label: 'Total', value: String(stats.totalMessages) },
+              { emoji: '👤', label: 'User', value: String(stats.userMessages) },
+              { emoji: '🤖', label: 'Bot', value: String(stats.botMessages) },
+            ]) + format.footer('Memory ID: wa-' + senderNum)
+            await sendText(out)
+          } else {
+            await sendText('❌ Memory module ga tersedia')
+          }
+          break
         }
 
         // ==================== CONFIG (per-user + global owner) ====================

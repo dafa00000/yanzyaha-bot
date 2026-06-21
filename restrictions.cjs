@@ -8,12 +8,15 @@
 
 const RESTRICTED_GROUPS = {
   // Group: "Yanz Chat" (default restricted)
-  // Only basic info + AI + search allowed. No download, no games, no config.
+  // Only basic info + AI + search + memory management allowed.
+  // No download, no games, no config.
   '120363405661184579@g.us': [
     'menu', 'help', 'start',
     'ping', 'botinfo', 'owner',
     'ai', 'reset',
     'search',
+    'forget',  // hapus memory grup (.forget)
+    'memory',  // lihat memory grup (owner-only, .memory)
   ],
   // To add more groups, copy the line above with the new JID:
   // '120363999999999@g.us': ['menu', 'ping', 'ai', 'search'],
