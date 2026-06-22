@@ -308,70 +308,88 @@ const OWNER_EXTRA_SECTIONS = {
 const RESTRICTED_SECTIONS = ['info', 'ai', 'search', 'download']
 
 // ─── RENDER ENGINE ────────────────────────────────────────────
-// Render section dengan auto-sized box (lebar ngikutin konten terpanjang)
-// Style: ╭─「 TITLE 」───╮
-//        │ cmd » desc        │
-//        ╰────────────╯
+// Style: OPEN BOX (narrow top/bottom, wide body, no right border)
+//   ╭─「 EMOJI TITLE 」
+//   │ ⌬ .cmd      » description
+//   │ ⌬ .longer   » description
+//   │ ◇ note text
+//   ╰────────────────
+//
+// Rules:
+//   - Header: ╭─「 TITLE 」  (no closing ╮, no fill dashes)
+//   - Footer: ╰────────────────  (fixed 16 dashes — konsisten across sections)
+//   - Cmd col: padEnd(longest_cmd + 1) untuk cmd sederhana, +2 kalau ada
+//              bracket/slash (lebih banyak space buat "visual breathing room")
+//   - Info notes (di section): ◇ prefix, no padding
+//   - Header rows (User/Prefix/Group/Kamu): TANPA prefix, plain "│ Label : value"
 
-function renderItem(item) {
-  if (item.type === 'info') return item.text
-  // Pad cmd dengan 2 trailing spaces (atau sampe 18 char) buat align
-  const paddedCmd = item.cmd.padEnd(18)
-  return '⌬ ' + paddedCmd + ' » ' + item.desc
+function cmdColumnWidth(items) {
+  const cmdItems = (items || []).filter(it => it.type === 'cmd')
+  if (cmdItems.length === 0) return 0
+  const longest = cmdItems.reduce((m, it) => Math.max(m, (it.cmd || '').length), 0)
+  const longestCmd = cmdItems.find(it => (it.cmd || '').length === longest)?.cmd || ''
+  // +1 untuk cmd simple (.ping, .reset), +2 kalau ada bracket/slash/arrow
+  // (`.ai [tanya]`, `.cryptoprediksi [koin]`) biar » ga terlalu mepet
+  const hasComplex = /[\[<>\/]/.test(longestCmd)
+  return longest + (hasComplex ? 2 : 1)
+}
+
+function renderItem(item, cmdWidth) {
+  if (item.type === 'info') {
+    // Info note: ◇ prefix, no padding (strip leading "◇ " kalau ada)
+    const text = (item.text || '').replace(/^◇\s*/, '')
+    return '◇ ' + text
+  }
+  // Cmd: ⌬ prefix + padded cmd + » + desc
+  const paddedCmd = (item.cmd || '').padEnd(cmdWidth)
+  return '⌬ ' + paddedCmd + ' » ' + (item.desc || '')
 }
 
 function renderSection(section) {
-  // Build content lines (no border chars yet)
-  const contentLines = section.items.map(renderItem)
-
-  // titlePart panjang jadi acuan box width
+  const cmdWidth = cmdColumnWidth(section.items)
+  const contentLines = section.items.map(it => renderItem(it, cmdWidth))
   const titlePart = '「 ' + section.title + ' 」'
-  // innerContentWidth = panjang maksimal baris content (atau titlePart)
-  const innerContentWidth = Math.max(
-    titlePart.length,
-    ...contentLines.map(l => l.length)
-  )
 
-  // BOX_WIDTH = innerContentWidth + 4 (untuk │ + spasi di body)
-  // Semua baris (header, body, footer) akan punya BOX_WIDTH char
-  const boxWidth = innerContentWidth + 4
-
-  // Header: ╭─「 TITLE 」─...─╮  (total BOX_WIDTH)
-  const headerDashCount = Math.max(2, boxWidth - 3 - titlePart.length)
-  const header = '╭─' + titlePart + '─'.repeat(headerDashCount) + '╮'
-
-  // Body: │ <content padded> │  (total BOX_WIDTH)
-  const body = contentLines.map(line => {
-    const padded = line + ' '.repeat(innerContentWidth - line.length)
-    return '│ ' + padded + ' │'
-  })
-
-  // Footer: ╰─...─╯  (total BOX_WIDTH)
-  const footerDashCount = boxWidth - 2
-  const footer = '╰' + '─'.repeat(footerDashCount) + '╯'
+  // Header: ╭─「 TITLE 」  (narrow, no closing ╮)
+  const header = '╭─' + titlePart
+  // Body: │ <content>  (no closing │ — open box aesthetic)
+  const body = contentLines.map(line => '│ ' + line)
+  // Footer: ╰────────────────  (fixed 16 dashes — konsisten di semua section)
+  const footer = '╰' + '─'.repeat(16)
 
   return [header, ...body, footer].join('\n')
 }
 
 function renderHeader(jid, sender, isGroup = false) {
+  // User/Group rows: plain "Label : value" TANPA ◇ prefix.
+  // Alignment: label di-padEnd ke 7 char, lalu ':', lalu space, lalu value.
+  //   "User   : @xxx"   (4 + 3 sp + :) = 8 chars sebelum value
+  //   "Prefix : ."      (6 + 1 sp + :) = 8 chars sebelum value
+  //   "Group  : ..."    (5 + 2 sp + :) = 8 chars sebelum value
+  //   "Kamu   : @xxx"   (4 + 3 sp + :) = 8 chars sebelum value
   const user = (sender || jid || '').split('@')[0].split(':')[0]
-  if (isGroup) {
-    return renderSection({
-      title: 'YANZYAHA-BOT',
-      items: [
-        { type: 'info', text: 'Group  : ' + (jid || '-') },
-        { type: 'info', text: 'Kamu   : @' + user },
-        { type: 'info', text: 'Prefix : .' },
-      ],
-    })
-  }
-  return renderSection({
-    title: 'YANZYAHA-BOT',
-    items: [
-      { type: 'info', text: 'User   : @' + user },
-      { type: 'info', text: 'Prefix : .' },
-    ],
-  })
+  const labelUser = 'User'.padEnd(7) + ':'
+  const labelPrefix = 'Prefix'.padEnd(7) + ':'
+  const labelGroup = 'Group'.padEnd(7) + ':'
+  const labelKamu = 'Kamu'.padEnd(7) + ':'
+
+  const rows = isGroup
+    ? [
+        labelGroup + ' ' + (jid || '-'),
+        labelKamu + ' @' + user,
+        labelPrefix + ' .',
+      ]
+    : [
+        labelUser + ' @' + user,
+        labelPrefix + ' .',
+      ]
+
+  const titlePart = '「 YANZYAHA-BOT 」'
+  const header = '╭─' + titlePart
+  const body = rows.map(r => '│ ' + r)
+  const footer = '╰' + '─'.repeat(16)
+
+  return [header, ...body, footer].join('\n')
 }
 
 // ─── FILTER LOGIC ──────────────────────────────────────────────

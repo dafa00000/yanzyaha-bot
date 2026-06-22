@@ -237,24 +237,36 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     const msg = messages[0]
     if (!msg?.message || msg.key.fromMe) return
 
-    const from = msg.key.remoteJid
-    const isGroup = from.endsWith('@g.us')
-    const sender = isGroup ? msg.key.participant : from
+    // ─── OUTER TRY/CATCH + DIAGNOSTIC LOG (no more silent drop) ───
+    // Tanpa ini, satu error di handler mana aja akan kill handler chain
+    // → user ga dapet response, ga ada log yang nyebut error spesifik.
+    // Sekarang: error apapun → fallback reply "⚠️ bot error" + log stack trace.
+    try {
+      const from = msg.key.remoteJid
+      const isGroup = from.endsWith('@g.us')
+      const sender = isGroup ? msg.key.participant : from
+      const _logBody = (
+        msg.message.conversation ||
+        msg.message.extendedTextMessage?.text ||
+        msg.message.imageMessage?.caption ||
+        msg.message.videoMessage?.caption || ''
+      ).slice(0, 80)
+      console.log(`📨 [ARRIVE] ${from} from=${sender} body="${_logBody}"`)
 
-    console.log('[USER LID]', sender);
-    // Catat user
-    const senderNomor = sender ? sender.replace(/@(lid|s\.whatsapp\.net)$/, '') : '';
-    saveUser(sender, senderNomor);
+      console.log('[USER LID]', sender);
+      // Catat user
+      const senderNomor = sender ? sender.replace(/@(lid|s\.whatsapp\.net)$/, '') : '';
+      saveUser(sender, senderNomor);
 
-    // Log group JID (if applicable) — was missing before, caused confusion
-    if (isGroup) {
-      console.log('[GROUP JID]', from, '| sender=', sender, '| members via metadata on demand');
-    }
+      // Log group JID (if applicable) — was missing before, caused confusion
+      if (isGroup) {
+        console.log('[GROUP JID]', from, '| sender=', sender, '| members via metadata on demand');
+      }
 
-    // Catat user
+      // Catat user
 
-    // Cek banned
-    if (sender && !isOwner(sender) && isBanned(sender)) { console.log('[BANNED] Blocked:', sender); return; }
+      // Cek banned
+      if (sender && !isOwner(sender) && isBanned(sender)) { console.log('[BANNED] Blocked:', sender); return; }
 
     const body =
       msg.message.conversation ||
@@ -794,6 +806,21 @@ case 'download':
     } catch (err) {
       console.error('Error:', err)
       await sendText(`❌ Error: ${err.message}`)
+    }
+    } catch (fatalErr) {
+      console.error('💥 [FATAL-HANDLER]', fatalErr?.message)
+      console.error('  Stack:', fatalErr?.stack?.split('\n').slice(0, 5).join('\n'))
+      // Best-effort fallback reply — jangan throw lagi
+      try {
+        const errJid = msg.key.remoteJid
+        await sock.sendMessage(errJid, {
+          text: '⚠️ Bot error, coba lagi ya. (Error udah di-log, owner bisa cek Railway logs.)'
+        }, {})
+        console.log(`📤 [FALLBACK-REPLY] sent to ${errJid}`)
+      } catch (sendErr) {
+        console.error('💥 [FALLBACK-REPLY-FAIL]', sendErr?.message)
+        console.error('  JID:', msg.key.remoteJid, '| fromMe:', msg.key.fromMe)
+      }
     }
   })
 }

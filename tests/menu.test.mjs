@@ -197,35 +197,101 @@ await test('start redirect: returns null for private chat', () => {
 })
 
 // ─── ALIGNMENT CHECKS ────────────────────────────────────────
-console.log('\n── alignment consistency ──')
+console.log('\n── alignment consistency (open box style) ──')
 
-await test('menu: within each box, all lines have same width', () => {
+await test('menu: every section has header (╭), body (│), footer (╰)', () => {
   const out = getMenuText({
     key: {
       remoteJid: RESTRICTED_JID,
       participant: '628xxx@s.whatsapp.net'
     }
   })
-  // For each section box, check that header/body/footer have consistent width
   const lines = out.split('\n')
-  let boxLines = []
+  let inSection = false
+  let sectionIdx = 0
+  let hasBody = false
   for (const line of lines) {
-    if (line.startsWith('╭') || line.startsWith('╰')) {
-      // End of current box
-      if (boxLines.length > 0) {
-        const widths = boxLines.map(l => l.length)
-        ok(widths.every(w => w === widths[0]), `box lines should have same width: ${JSON.stringify(widths)}`)
-      }
-      boxLines = [line]
+    if (line.startsWith('╭─')) {
+      ok(!inSection, `section ${sectionIdx}: previous didn't close`)
+      inSection = true
+      hasBody = false
     } else if (line.startsWith('│')) {
-      boxLines.push(line)
+      hasBody = true
+    } else if (line.startsWith('╰')) {
+      ok(inSection, `footer before header in section ${sectionIdx}`)
+      ok(hasBody, `section ${sectionIdx}: should have at least one body line`)
+      inSection = false
+      sectionIdx++
     }
   }
-  // Don't forget last box
-  if (boxLines.length > 0) {
-    const widths = boxLines.map(l => l.length)
-    ok(widths.every(w => w === widths[0]), `last box: ${JSON.stringify(widths)}`)
+})
+
+await test('menu: all footers use consistent 16-dash style', () => {
+  const out = getMenuText({
+    key: {
+      remoteJid: RESTRICTED_JID,
+      participant: '628xxx@s.whatsapp.net'
+    }
+  })
+  const lines = out.split('\n')
+  const footers = lines.filter(l => l.startsWith('╰'))
+  ok(footers.length >= 3, `should have multiple footers (header + sections), got ${footers.length}`)
+  const expected = '╰' + '─'.repeat(16)
+  for (const f of footers) {
+    eq(f, expected, `footer mismatch`)
   }
+})
+
+await test('menu: ⌬ command » separator aligned within each section', () => {
+  const out = getMenuText({
+    key: {
+      remoteJid: RESTRICTED_JID,
+      participant: '628xxx@s.whatsapp.net'
+    }
+  })
+  const lines = out.split('\n')
+  let sectionIdx = 0
+  let cmdCols = []
+  for (const line of lines) {
+    if (line.startsWith('╭─')) {
+      // New section — reset
+      cmdCols = []
+    } else if (line.startsWith('╰')) {
+      // End of section — verify all cmdCols had same » column
+      if (cmdCols.length > 1) {
+        const allSame = cmdCols.every(c => c === cmdCols[0])
+        ok(allSame, `section ${sectionIdx}: » should align, got cols ${JSON.stringify(cmdCols)}`)
+      }
+      sectionIdx++
+    } else if (line.startsWith('│') && line.includes('⌬ ') && line.includes(' » ')) {
+      cmdCols.push(line.indexOf(' » '))
+    }
+  }
+})
+
+await test('menu: header rows use Label : value format (no ◇)', () => {
+  const out = getMenuText({
+    key: { remoteJid: '628xxx@s.whatsapp.net', participant: '628xxx@s.whatsapp.net' }
+  })
+  // First box is the header (User/Prefix)
+  const lines = out.split('\n')
+  const headerEnd = lines.findIndex(l => l.startsWith('╰'))
+  const headerLines = lines.slice(0, headerEnd + 1)
+  // Should have "User   : @" and "Prefix : ." lines (no ◇)
+  const headerText = headerLines.join('\n')
+  has(headerText, 'User   :')
+  has(headerText, 'Prefix :')
+  // Should NOT have ◇ in header (that's only for section info notes)
+  ok(!headerText.includes('◇'), 'header should not use ◇ prefix')
+})
+
+await test('menu: section info notes use ◇ prefix', () => {
+  const out = getMenuText({
+    key: { remoteJid: '628xxx@s.whatsapp.net', participant: '628xxx@s.whatsapp.net' }
+  })
+  // AI section has info notes
+  has(out, '◇ Chat biasa')
+  has(out, '◇ Per-user memory')
 })
 
 await test('menu: command names not truncated', () => {
