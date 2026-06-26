@@ -115,14 +115,14 @@ await test('menu restricted group: filtered (4 sections)', () => {
   const out = menu.getMenuText({
     key: { remoteJid: '120363405661184579@g.us', participant: '628xxx@s.whatsapp.net' }
   })
-  // 4 sections visible: INFO, AI, SEARCH, DOWNLOAD
+  // 4 sections visible: INFO, AI, SEARCH, DOWNLOAD, PERSONAL CONFIG
   ok(out.includes('INFO'))
   ok(out.includes('AI CHAT'))
   ok(out.includes('DOWNLOAD'))
+  ok(out.includes('PERSONAL CONFIG')) // Now shown in restricted groups
   // Sections NOT visible
   ok(!out.includes('MARKET'))
   ok(!out.includes('SOSMED'))
-  ok(!out.includes('PERSONAL CONFIG'))
 })
 
 await test('start redirect: works for restricted group', () => {

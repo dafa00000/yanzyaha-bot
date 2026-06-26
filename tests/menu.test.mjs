@@ -123,7 +123,7 @@ await test('restricted: only shows allowed sections', () => {
   notHas(out, 'MARKET')
   notHas(out, 'SOSMED')
   notHas(out, 'GAME')
-  notHas(out, 'PERSONAL CONFIG')
+  has(out, 'PERSONAL CONFIG') // Now shown in restricted groups
 })
 
 await test('restricted: only shows allowed AI commands', () => {
