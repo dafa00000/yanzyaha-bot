@@ -48,6 +48,10 @@ import { handleUpdate, handleRestart } from './handler-update.js'
 import { handleMessage } from "./handler.js"
 import { handleAutoDownload } from './handler-autodl.js'
 
+// New features
+const economy = require('./handler-economy.cjs')
+const tools = require('./handler-tools.cjs')
+
 const require = createRequire(import.meta.url)
 const fileManager = require('./file-manager.cjs')
 const aiUpdate = require('./handler-ai-update.cjs')
@@ -619,6 +623,227 @@ case 'download':
         case 'jawab':
           await handleJawab(sock, msg, text)
           break
+          
+        // ═══════════════════════════════════════════════
+        // ECONOMY & GAMES (NEW)
+        // ═══════════════════════════════════════════════
+        case 'daily': {
+          const result = economy.claimDaily(sender)
+          await sendText(result.message)
+          break
+        }
+        case 'balance':
+        case 'saldo':
+        case 'bal': {
+          const bal = economy.getBalance(sender)
+          const user = economy.getUser(sender)
+          await sendText(
+            `💰 *SALDO LO*\n\n` +
+            `💎 ${economy.formatNumber(bal)} poin\n` +
+            `⭐ Level ${user.level}\n` +
+            `🎮 ${user.totalGames} game dimainkan\n` +
+            `🏆 ${user.wins} menang | ${user.losses} kalah`
+          )
+          break
+        }
+        case 'pay':
+        case 'transfer': {
+          if (!text) { await sendText('❌ Contoh: .pay @user 100'); break }
+          const parts = text.trim().split(/\s+/)
+          const target = parts[0]?.replace(/[@+]/g, '')
+          const amount = parseInt(parts[1])
+          if (!target || isNaN(amount)) { await sendText('❌ Contoh: .pay 628xxx 100'); break }
+          const result = economy.transfer(sender, target + '@s.whatsapp.net', amount)
+          await sendText(result.message)
+          break
+        }
+        case 'shop': {
+          const items = economy.getShop()
+          let shopText = '🛒 *SHOP*\n\n'
+          items.forEach((item, i) => {
+            shopText += `${item.emoji} ${item.name}\n`
+            shopText += `   ${item.desc}\n`
+            shopText += `   💰 ${economy.formatNumber(item.price)} poin\n\n`
+          })
+          shopText += `Ketik: .buy [item_id]\n`
+          shopText += `Contoh: .buy shield`
+          await sendText(shopText)
+          break
+        }
+        case 'buy': {
+          if (!text) { await sendText('❌ Contoh: .buy shield'); break }
+          const result = economy.buyItem(sender, text.trim().toLowerCase())
+          await sendText(result.message)
+          break
+        }
+        case 'slot': {
+          const bet = parseInt(text) || 100
+          const result = economy.playSlot(sender, bet)
+          await sendText(result.message)
+          break
+        }
+        case 'bj':
+        case 'blackjack': {
+          if (!text) { await sendText('❌ Contoh: .bj 100'); break }
+          const result = economy.startBlackjack(sender, parseInt(text))
+          await sendText(result.message)
+          break
+        }
+        case 'hit': {
+          const result = economy.hitBlackjack(sender)
+          await sendText(result.message)
+          break
+        }
+        case 'stand': {
+          const result = economy.standBlackjack(sender)
+          await sendText(result.message)
+          break
+        }
+        case 'roulette':
+        case 'roul': {
+          if (!text) {
+            await sendText(
+              `🎡 *ROULETTE*\n\n` +
+              `Cara: .roulette [pilihan] [bet]\n\n` +
+              `Pilihan:\n` +
+              `• merah/hitam (2x)\n` +
+              `• genap/ganjil (2x)\n` +
+              `• angka 0-36 (36x)\n\n` +
+              `Contoh: .roulette merah 100`
+            )
+            break
+          }
+          const parts = text.trim().split(/\s+/)
+          const choice = parts[0]
+          const bet = parseInt(parts[1]) || 100
+          const result = economy.playRoulette(sender, choice, bet)
+          await sendText(result.message)
+          break
+        }
+        case 'trivia': {
+          if (text && ['A', 'B', 'C', 'D', 'a', 'b', 'c', 'd'].includes(text.trim().toUpperCase())) {
+            const result = economy.answerTrivia(sender, text.trim())
+            await sendText(result.message)
+          } else {
+            const result = economy.startTrivia(sender)
+            await sendText(result.message)
+          }
+          break
+        }
+        case 'word': {
+          if (text) {
+            const result = economy.answerWordGame(sender, text.trim())
+            await sendText(result.message)
+          } else {
+            const result = economy.startWordGame(sender)
+            await sendText(result.message)
+          }
+          break
+        }
+        case 'startnum': {
+          if (!isGroup) { await sendText('❌ Command ini cuma buat grup!'); break }
+          const result = economy.startNumberGame(sender, from)
+          await sendText(result.message)
+          break
+        }
+        case 'guess': {
+          if (!isGroup) { await sendText('❌ Command ini cuma buat grup!'); break }
+          const num = parseInt(text)
+          if (isNaN(num)) { await sendText('❌ Contoh: .guess 50'); break }
+          const result = economy.guessNumber(sender, from, num)
+          await sendText(result.message)
+          break
+        }
+        case 'top':
+        case 'leaderboard':
+        case 'ranking': {
+          const lb = economy.getLeaderboard(10)
+          await sendText(economy.formatLeaderboard(lb))
+          break
+        }
+        
+        // ═══════════════════════════════════════════════
+        // TOOLS (NEW)
+        // ═══════════════════════════════════════════════
+        case 'translate':
+        case 'tr': {
+          if (!text) {
+            await sendText(
+              `🌐 *TRANSLATE*\n\n` +
+              `Cara: .tr [teks] [bahasa]\n\n` +
+              `Contoh:\n` +
+              `.tr hello world\n` +
+              `.tr halo dunia en\n` +
+              `.tr こんにちは ja\n\n` +
+              `Auto-detect bahasa! Target default: Indonesia`
+            )
+            break
+          }
+          // Parse: .tr [text] [lang]
+          const trParts = text.trim().split(/\s+/)
+          let trText, trLang = 'id'
+          
+          // Check if last word is a language code
+          const lastWord = trParts[trParts.length - 1].toLowerCase()
+          if (tools.LANGUAGES[lastWord] && trParts.length > 1) {
+            trLang = lastWord
+            trText = trParts.slice(0, -1).join(' ')
+          } else {
+            trText = text
+          }
+          
+          const result = await tools.translate(trText, trLang)
+          await sendText(result.message)
+          break
+        }
+        case 'calc':
+        case 'kalkulator': {
+          if (!text) { await sendText('❌ Contoh: .calc 2+2*3'); break }
+          const result = tools.calculate(text)
+          await sendText(result.message)
+          break
+        }
+        case 'vn': {
+          if (!text) {
+            await sendText(
+              `🎤 *VOICE NOTE*\n\n` +
+              `Cara: .vn [teks]\n\n` +
+              `Contoh: .vn halo dunia\n\n` +
+              `Suara: Gadis Indonesia (imut!) 😊\n\n` +
+              `Bahasa lain:\n` +
+              `.vn en hello world\n` +
+              `.vn ja こんにちは`
+            )
+            break
+          }
+          
+          await sendText('🎤 Bikin voice note...')
+          
+          let vnText = text
+          let voice = 'id-ID-GadisNeural' // Default: suara imut Indonesia
+          
+          // Check for language prefix
+          const vnParts = text.split(/\s+/)
+          const firstWord = vnParts[0].toLowerCase()
+          if (tools.CUTE_VOICES[firstWord]) {
+            voice = tools.CUTE_VOICES[firstWord].name
+            vnText = vnParts.slice(1).join(' ')
+          }
+          
+          const result = await tools.textToVoice(vnText, voice)
+          if (result.success) {
+            await sock.sendMessage(from, {
+              audio: { url: result.path },
+              mimetype: 'audio/mpeg',
+              ptt: true // Push to talk = voice note
+            }, { quoted: msg })
+            // Cleanup
+            try { fs.unlinkSync(result.path) } catch {}
+          } else {
+            await sendText(result.message)
+          }
+          break
+        }
         case 'imagine':
         case 'img':
         case 'generate':

@@ -113,6 +113,37 @@ const SECTIONS = {
       { type: 'cmd', cmd: '.teks [pesan]', desc: 'Echo pesan' },
     ],
   },
+  economy: {
+    title: '💰 ECONOMY & POINTS',
+    items: [
+      { type: 'cmd', cmd: '.daily', desc: 'Ambil hadiah harian' },
+      { type: 'cmd', cmd: '.balance', desc: 'Cek saldo poin' },
+      { type: 'cmd', cmd: '.pay @user [jumlah]', desc: 'Transfer poin' },
+      { type: 'cmd', cmd: '.shop', desc: 'Lihat item shop' },
+      { type: 'cmd', cmd: '.buy [item]', desc: 'Beli item' },
+      { type: 'cmd', cmd: '.top', desc: 'Leaderboard poin' },
+    ],
+  },
+  gamesAdvanced: {
+    title: '🎰 GAME PREMIUM',
+    items: [
+      { type: 'cmd', cmd: '.slot [bet]', desc: 'Slot machine' },
+      { type: 'cmd', cmd: '.bj [bet]', desc: 'Blackjack' },
+      { type: 'cmd', cmd: '.roulette [pilihan] [bet]', desc: 'Roulette' },
+      { type: 'cmd', cmd: '.trivia', desc: 'Trivia quiz' },
+      { type: 'cmd', cmd: '.word', desc: 'Susun kata' },
+      { type: 'cmd', cmd: '.startnum', desc: 'Tebak angka (grup)' },
+      { type: 'cmd', cmd: '.guess [angka]', desc: 'Jawab tebak angka' },
+    ],
+  },
+  tools: {
+    title: '🛠️ TOOLS',
+    items: [
+      { type: 'cmd', cmd: '.tr [teks] [bahasa]', desc: 'Translate auto-detect' },
+      { type: 'cmd', cmd: '.calc [ekspresi]', desc: 'Kalkulator' },
+      { type: 'cmd', cmd: '.vn [teks]', desc: 'Teks jadi voice note' },
+    ],
+  },
   personalConfig: {
     title: '⚙️ PERSONAL CONFIG (per-user)',
     requiresPrivate: true,
@@ -135,6 +166,13 @@ const SECTIONS = {
       { type: 'cmd', cmd: '.mykeys', desc: 'Lihat semua API key' },
       { type: 'cmd', cmd: '.myconfig', desc: 'Lihat config lo' },
       { type: 'cmd', cmd: '.resetmyconfig', desc: 'Hapus config custom' },
+    ],
+  },
+  voiceNoteRestricted: {
+    title: '🎤 VOICE NOTE',
+    items: [
+      { type: 'cmd', cmd: '.vn [teks]', desc: 'Teks jadi voice note' },
+      { type: 'info', text: '◇ Suara imut Indonesia!' },
     ],
   },
   ownerConfig: {
@@ -314,8 +352,8 @@ const OWNER_EXTRA_SECTIONS = {
   },
 }
 
-// Sections khusus RESTRICTED GROUP (5: INFO, AI, SEARCH, DOWNLOAD, PERSONAL CONFIG)
-const RESTRICTED_SECTIONS = ['info', 'ai', 'search', 'download', 'personalConfigRestricted']
+// Sections khusus RESTRICTED GROUP (6: INFO, AI, SEARCH, DOWNLOAD, PERSONAL CONFIG, VOICE NOTE)
+const RESTRICTED_SECTIONS = ['info', 'ai', 'search', 'download', 'personalConfigRestricted', 'voiceNoteRestricted']
 
 // ─── RENDER ENGINE ────────────────────────────────────────────
 // Style: OPEN BOX (narrow top/bottom, wide body, no right border)
