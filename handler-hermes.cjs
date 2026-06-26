@@ -478,9 +478,21 @@ async function saveHistory(sender, messages) {
 }
 
 async function directChat(prompt, opts = {}) {
-  const baseUrl = (opts.userEnv && opts.userEnv.OPENAI_BASE_URL) || process.env.OPENAI_BASE_URL || 'https://api.tokenrouter.com/v1'
-  const apiKey = (opts.userEnv && opts.userEnv.OPENAI_API_KEY) || process.env.OPENAI_API_KEY
+  const baseUrl = (opts.userEnv && opts.userEnv.OPENAI_BASE_URL) || process.env.OPENAI_BASE_URL || 'https://api.badtheorylabs.com/v1'
+  let apiKey = (opts.userEnv && opts.userEnv.OPENAI_API_KEY) || process.env.OPENAI_API_KEY
   let model = (opts.userEnv && opts.userEnv.HERMES_MODEL) || opts.model || process.env.HERMES_MODEL || 'claude-opus-4-8'
+  
+  // Multi-key rotation
+  const allKeys = opts.userEnv?.API_KEYS || []
+  if (allKeys.length > 1) {
+    const currentIndex = opts.userEnv?.API_KEY_INDEX || 0
+    apiKey = allKeys[currentIndex % allKeys.length]
+    // Update index for next call
+    if (opts.userEnv) {
+      opts.userEnv.API_KEY_INDEX = (currentIndex + 1) % allKeys.length
+    }
+    console.log('[KEY-ROTATE] Using key', currentIndex + 1, '/', allKeys.length)
+  }
   
   // Auto-prefix provider if needed (e.g., OpenRouter needs "anthropic/claude-opus-4-8")
   if (!model.includes('/') && baseUrl.includes('openrouter')) {

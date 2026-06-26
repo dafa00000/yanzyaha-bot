@@ -132,6 +132,7 @@ const SECTIONS = {
     items: [
       { type: 'cmd', cmd: '.setapikey <key>', desc: 'Set API key pribadi' },
       { type: 'cmd', cmd: '.setbaseurl <url>', desc: 'Set base URL pribadi' },
+      { type: 'cmd', cmd: '.mykeys', desc: 'Lihat semua API key' },
       { type: 'cmd', cmd: '.myconfig', desc: 'Lihat config lo' },
       { type: 'cmd', cmd: '.resetmyconfig', desc: 'Hapus config custom' },
     ],

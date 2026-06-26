@@ -278,15 +278,68 @@ async function handle(sock, msg, body, sender) {
         return replyWa(sock, jid,
           '⚠️ Contoh: `.setapikey sk-abc123...`\n\n' +
           'Set API key *pribadi* lo. Billing ke akun lo sendiri.\n' +
-          'Kalo ga set, pake API key default dari Railway.',
+          'Kalo ga set, pake API key default dari Railway.\n\n' +
+          '🔥 *Multi Key:* Pisahin dengan koma atau enter\n' +
+          'Contoh: `.setapikey key1,key2,key3`\n' +
+          'Bot otomatis rotate tiap request!',
           msg
         )
       }
-      setUserConfig(sender, { OPENAI_API_KEY: value })
+      
+      // Support multiple keys (comma or newline separated)
+      const keys = value.split(/[,\n]+/).map(k => k.trim()).filter(k => k.length > 0)
+      
+      if (keys.length === 0) {
+        return replyWa(sock, jid, '❌ API key ga boleh kosong!', msg)
+      }
+      
+      if (keys.length === 1) {
+        // Single key
+        setUserConfig(sender, { OPENAI_API_KEY: keys[0] })
+        return replyWa(sock, jid,
+          `✅ API key lo disimpan.\n` +
+          `Masked: \`${maskKey(keys[0])}\`\n\n` +
+          'Sekarang lo bisa pake model apapun sesuai billing lo sendiri.',
+          msg
+        )
+      }
+      
+      // Multiple keys - store as array
+      setUserConfig(sender, { 
+        OPENAI_API_KEY: keys[0], // Primary key
+        API_KEYS: keys, // All keys for rotation
+        API_KEY_INDEX: 0 // Current rotation index
+      })
+      
       return replyWa(sock, jid,
-        `✅ API key lo disimpan.\n` +
-        `Masked: \`${maskKey(value)}\`\n\n` +
-        'Sekarang lo bisa pake model apapun sesuai billing lo sendiri.',
+        `✅ *${keys.length} API key* disimpan!\n\n` +
+        `🔑 Key 1: \`${maskKey(keys[0])}\`\n` +
+        `🔑 Key 2: \`${maskKey(keys[1])}\`\n` +
+        (keys.length > 2 ? `🔑 ...dan ${keys.length - 2} key lainnya\n` : '') +
+        `\n⚡ Bot otomatis rotate key tiap request!\n` +
+        `📊 Total: ${keys.length} key siap dipake`,
+        msg
+      )
+    }
+    
+    case 'mykeys': {
+      const userConf = getUserConfig(sender)
+      const keys = userConf?.API_KEYS || []
+      if (keys.length === 0) {
+        return replyWa(sock, jid,
+          '🔑 *Belum ada API key tersimpan*\n\n' +
+          'Set dengan: `.setapikey key1,key2,key3`\n' +
+          'Bisa set banyak key sekaligus!',
+          msg
+        )
+      }
+      
+      let keyList = keys.map((k, i) => `${i+1}. \`${maskKey(k)}\``).join('\n')
+      return replyWa(sock, jid,
+        `🔑 *API Keys Lo*\n\n` +
+        `${keyList}\n\n` +
+        `📊 Total: ${keys.length} key\n` +
+        `⚡ Rotating setiap request`,
         msg
       )
     }
