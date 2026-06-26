@@ -29,6 +29,14 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────
+// Owner IDs - unlimited balance
+const OWNER_IDS = ['83807763972304', '110857451221063']
+
+function isOwner(sender) {
+  const id = sender.replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+  return OWNER_IDS.includes(id)
+}
+
 function loadJSON(file, defaultVal = {}) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'))
@@ -100,6 +108,7 @@ function addPoints(sender, amount) {
 }
 
 function removePoints(sender, amount) {
+  if (isOwner(sender)) return getUser(sender) // Owner unlimited
   const user = getUser(sender)
   user.points = Math.max(0, user.points - amount)
   saveUser(sender, user)
@@ -107,6 +116,7 @@ function removePoints(sender, amount) {
 }
 
 function getBalance(sender) {
+  if (isOwner(sender)) return 999999999 // Owner unlimited
   const user = getUser(sender)
   return user.points
 }
@@ -157,12 +167,18 @@ function claimDaily(sender) {
 function transfer(from, to, amount) {
   if (amount <= 0) return { success: false, message: 'Jumlah harus lebih dari 0!' }
   
-  const fromUser = getUser(from)
-  if (fromUser.points < amount) {
-    return { success: false, message: `Saldo lo kurang! 💰 ${formatNumber(fromUser.points)} poin` }
+  // Owner ga perlu cek saldo (unlimited)
+  if (!isOwner(from)) {
+    const fromUser = getUser(from)
+    if (fromUser.points < amount) {
+      return { success: false, message: `Saldo lo kurang! 💰 ${formatNumber(fromUser.points)} poin` }
+    }
   }
   
-  removePoints(from, amount)
+  // Owner ga dikurangi saldonya
+  if (!isOwner(from)) {
+    removePoints(from, amount)
+  }
   addPoints(to, amount)
   
   return {
