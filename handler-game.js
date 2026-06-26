@@ -248,7 +248,7 @@ export async function handleJawab(sock, msg, text) {
     }
 
     const jawaban = typeof text === 'string'
-      ? text.trim().split(' ').slice(1)[0]?.toUpperCase() || ''
+      ? text.trim().split(/\s+/)[0]?.toUpperCase() || ''
       : ''
 
     if (!['A', 'B', 'C', 'D'].includes(jawaban)) {
