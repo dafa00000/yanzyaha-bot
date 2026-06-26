@@ -145,58 +145,76 @@ function calculate(expression) {
 
 // ─── VOICE NOTE ───────────────────────────────────────────────
 // Pakai edge-tts (Microsoft) dengan suara imut
-async function textToVoice(text, voice = 'id-ID-GadisNeural') {
+async function textToVoice(text, voice = 'en-US-AnaNeural') {
   try {
     const tmpDir = path.join(process.env.HERMES_HOME || '/opt/data', 'tmp')
     if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
     
     const outputFile = path.join(tmpDir, `vn_${Date.now()}.mp3`)
     
-    // Suara imut Indonesia: id-ID-GadisNeural (gadis = cewek imut)
-    // Suara lain: id-ID-ArdiNeural (cowok), id-ID-GadisNeural (cewek)
-    // English cute: en-US-AnaNeural (cewek imut)
+    // Sanitize text - remove special chars that might break command
+    const safeText = text.replace(/["'`\\]/g, '').replace(/\n/g, ' ')
     
-    // Pakai edge-tts
-    const command = `edge-tts --voice "${voice}" --text "${text.replace(/"/g, '\\"')}" --write-media "${outputFile}"`
+    // Pakai edge-tts dengan spawn untuk handle yang lebih reliable
+    const { spawn } = require('child_process')
     
-    execSync(command, { timeout: 30000 })
-    
-    if (!fs.existsSync(outputFile)) {
-      throw new Error('Gagal generate voice')
-    }
-    
-    return {
-      success: true,
-      path: outputFile,
-      voice: voice,
-      message: `🎤 Voice note berhasil dibuat!`
-    }
+    return new Promise((resolve, reject) => {
+      const proc = spawn('edge-tts', [
+        '--voice', voice,
+        '--text', safeText,
+        '--write-media', outputFile
+      ], { timeout: 30000 })
+      
+      let stderr = ''
+      proc.stderr.on('data', d => stderr += d.toString())
+      
+      proc.on('close', (code) => {
+        if (code === 0 && fs.existsSync(outputFile)) {
+          resolve({
+            success: true,
+            path: outputFile,
+            voice: voice,
+            message: '🎤 Voice note berhasil dibuat!'
+          })
+        } else {
+          reject(new Error(`edge-tts exit code ${code}: ${stderr}`))
+        }
+      })
+      
+      proc.on('error', (err) => {
+        reject(new Error(`edge-tts error: ${err.message}`))
+      })
+    })
   } catch (err) {
     return {
       success: false,
-      message: `❌ Gagal bikin voice note: ${err.message}\n\n` +
-        `Pastikan edge-tts terinstall: pip install edge-tts`
+      message: `❌ Gagal bikin voice note: ${err.message}\n\nPastikan edge-tts terinstall: pip install edge-tts`
     }
   }
 }
 
 // Daftar suara imut
 const CUTE_VOICES = {
-  'id': { name: 'id-ID-GadisNeural', desc: '🇮🇩 Gadis (Imut)' },
+  'en': { name: 'en-US-AnaNeural', desc: '🇺🇸 Ana (Cute Girl)' },
+  'en-m': { name: 'en-US-GuyNeural', desc: '🇺🇸 Guy (Male)' },
+  'en-uk': { name: 'en-GB-SoniaNeural', desc: '🇬🇧 Sonia (British)' },
+  'ja': { name: 'ja-JP-NanamiNeural', desc: '🇯🇵 Nanami (Anime Girl)' },
+  'ko': { name: 'ko-KR-SunHiNeural', desc: '🇰🇷 SunHi (Korean Girl)' },
+  'zh': { name: 'zh-CN-XiaoxiaoNeural', desc: '🇨🇳 Xiaoxiao (Chinese Girl)' },
+  'id': { name: 'id-ID-GadisNeural', desc: '🇮🇩 Gadis (Indonesia)' },
   'id-m': { name: 'id-ID-ArdiNeural', desc: '🇮🇩 Ardi (Cowok)' },
-  'en': { name: 'en-US-AnaNeural', desc: '🇺🇸 Ana (Cute)' },
-  'en-m': { name: 'en-US-GuyNeural', desc: '🇺🇸 Guy (Cowok)' },
-  'ja': { name: 'ja-JP-NanamiNeural', desc: '🇯🇵 Nanami (Imut)' },
-  'ko': { name: 'ko-KR-SunHiNeural', desc: '🇰🇷 SunHi (Imut)' },
-  'zh': { name: 'zh-CN-XiaoxiaoNeural', desc: '🇨🇳 Xiaoxiao (Imut)' },
-  'th': { name: 'th-TH-PremwadeeNeural', desc: '🇹🇭 Premwadee' },
-  'vi': { name: 'vi-VN-HoaiMyNeural', desc: '🇻🇳 HoaiMy' },
-  'ms': { name: 'ms-MY-YasminNeural', desc: '🇲🇾 Yasmin' },
-  'es': { name: 'es-ES-ElviraNeural', desc: '🇪🇸 Elvira' },
-  'fr': { name: 'fr-FR-DeniseNeural', desc: '🇫🇷 Denise' },
-  'de': { name: 'de-DE-KatjaNeural', desc: '🇩🇪 Katja' },
-  'pt': { name: 'pt-BR-FranciscaNeural', desc: '🇧🇷 Francisca' },
-  'ar': { name: 'ar-SA-ZariyahNeural', desc: '🇸🇦 Zariyah' },
+  'es': { name: 'es-ES-ElviraNeural', desc: '🇪🇸 Elvira (Spanish)' },
+  'fr': { name: 'fr-FR-DeniseNeural', desc: '🇫🇷 Denise (French)' },
+  'de': { name: 'de-DE-KatjaNeural', desc: '🇩🇪 Katja (German)' },
+  'pt': { name: 'pt-BR-FranciscaNeural', desc: '🇧🇷 Francisca (Brazilian)' },
+  'ar': { name: 'ar-SA-ZariyahNeural', desc: '🇸🇦 Zariyah (Arabic)' },
+  'th': { name: 'th-TH-PremwadeeNeural', desc: '🇹🇭 Premwadee (Thai)' },
+  'vi': { name: 'vi-VN-HoaiMyNeural', desc: '🇻🇳 HoaiMy (Vietnamese)' },
+  'ms': { name: 'ms-MY-YasminNeural', desc: '🇲🇾 Yasmin (Malay)' },
+  'ru': { name: 'ru-RU-SvetlanaNeural', desc: '🇷🇺 Svetlana (Russian)' },
+  'it': { name: 'it-IT-ElsaNeural', desc: '🇮🇹 Elsa (Italian)' },
+  'tr': { name: 'tr-TR-EmelNeural', desc: '🇹🇷 Emel (Turkish)' },
+  'hi': { name: 'hi-IN-SwaraNeural', desc: '🇮🇳 Swara (Hindi)' },
 }
 
 // ─── EXPORTS ──────────────────────────────────────────────────

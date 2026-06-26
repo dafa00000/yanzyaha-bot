@@ -806,11 +806,13 @@ case 'download':
             await sendText(
               `🎤 *VOICE NOTE*\n\n` +
               `Cara: .vn [teks]\n\n` +
-              `Contoh: .vn halo dunia\n\n` +
-              `Suara: Gadis Indonesia (imut!) 😊\n\n` +
+              `Contoh: .vn hello world\n\n` +
+              `Suara default: Ana (US Cute Girl)\n\n` +
               `Bahasa lain:\n` +
-              `.vn en hello world\n` +
-              `.vn ja こんにちは`
+              `.vn id halo dunia\n` +
+              `.vn ja こんにちは\n` +
+              `.vn ko 안녕하세요\n\n` +
+              `Semua bahasa: en, id, ja, ko, zh, es, fr, de, pt, ar, th, vi, ms, ru, it, tr, hi`
             )
             break
           }
@@ -818,7 +820,7 @@ case 'download':
           await sendText('🎤 Bikin voice note...')
           
           let vnText = text
-          let voice = 'id-ID-GadisNeural' // Default: suara imut Indonesia
+          let voice = 'en-US-AnaNeural' // Default: suara imut English (Ana)
           
           // Check for language prefix
           const vnParts = text.split(/\s+/)

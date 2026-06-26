@@ -17,6 +17,7 @@ const RESTRICTED_GROUPS = {
     'search',
     'forget',  // hapus memory grup (.forget)
     'memory',  // lihat memory grup (owner-only, .memory)
+    'vn',      // voice note
   ],
   // To add more groups, copy the line above with the new JID:
   // '120363999999999@g.us': ['menu', 'ping', 'ai', 'search'],
