@@ -48,10 +48,6 @@ import { handleUpdate, handleRestart } from './handler-update.js'
 import { handleMessage } from "./handler.js"
 import { handleAutoDownload } from './handler-autodl.js'
 
-// New features
-const economy = require('./handler-economy.cjs')
-const tools = require('./handler-tools.cjs')
-
 const require = createRequire(import.meta.url)
 const fileManager = require('./file-manager.cjs')
 const aiUpdate = require('./handler-ai-update.cjs')
@@ -59,6 +55,8 @@ const hermesHandler = require('./handler-hermes.cjs')
 const configHandler = require('./handler-config.cjs')
 const botConfig = require('./config.cjs')
 const format = require('./format.cjs')
+const economy = require('./handler-economy.cjs')
+const tools = require('./handler-tools.cjs')
 
 // Bot version & metadata
 const BOT_VERSION = '2.2.0'
