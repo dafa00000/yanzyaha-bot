@@ -528,7 +528,7 @@ async function directChat(prompt, opts = {}) {
         'Authorization': 'Bearer ' + apiKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ model: model, messages: messages, stream: false, temperature: 0.4, ...noReasoningParams }),
+      body: JSON.stringify({ model: model, messages: messages, stream: false, ...noReasoningParams }),
       signal: controller.signal,
     })
   } finally {
@@ -571,7 +571,7 @@ async function directChat(prompt, opts = {}) {
       res2 = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages: retryMessages, stream: false, temperature: 0.3, ...noReasoningParams }),
+        body: JSON.stringify({ model, messages: retryMessages, stream: false, ...noReasoningParams }),
         signal: controller2.signal,
       })
     } finally {
