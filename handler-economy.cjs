@@ -200,22 +200,72 @@ function getShop() {
   return loadJSON(SHOP_FILE, DEFAULT_SHOP)
 }
 
-function buyItem(sender, itemId) {
-  const user = getUser(sender)
+// Item aliases - biar user bisa pakai nama panjang
+const ITEM_ALIASES = {
+  'shield': 'shield',
+  'double': 'double',
+  'xp': 'double',
+  'double xp': 'double',
+  'luck': 'luck',
+  'lucky': 'luck',
+  'charm': 'luck',
+  'lucky charm': 'luck',
+  'badge': 'badge',
+  'vip': 'badge',
+  'vip badge': 'badge',
+  'crown': 'crown',
+}
+
+function findItem(query) {
   const shop = getShop()
-  const item = shop.find(i => i.id === itemId)
+  const q = query.toLowerCase().trim()
   
-  if (!item) return { success: false, message: 'Item ga ada di shop!' }
-  if (user.points < item.price) return { success: false, message: `Saldo kurang! Butuh ${formatNumber(item.price)} poin` }
+  // Exact ID match
+  let item = shop.find(i => i.id === q)
+  if (item) return item
   
-  user.points -= item.price
-  user.inventory.push({ id: item.id, name: item.name, boughtAt: new Date().toISOString() })
+  // Alias match
+  const aliasId = ITEM_ALIASES[q]
+  if (aliasId) {
+    item = shop.find(i => i.id === aliasId)
+    if (item) return item
+  }
+  
+  // Partial match (name contains)
+  item = shop.find(i => i.name.toLowerCase().includes(q))
+  if (item) return item
+  
+  return null
+}
+
+function buyItem(sender, itemQuery, quantity = 1) {
+  const user = getUser(sender)
+  const item = findItem(itemQuery)
+  
+  if (!item) return { success: false, message: `Item "${itemQuery}" ga ada di shop!\n\nKetik .shop buat liat daftar item` }
+  
+  // Owner unlimited, skip price check
+  if (!isOwner(sender)) {
+    const totalCost = item.price * quantity
+    if (user.points < totalCost) {
+      return { success: false, message: `Saldo kurang! Butuh ${formatNumber(totalCost)} poin (${quantity}x ${item.name})` }
+    }
+  }
+  
+  // Buy multiple
+  for (let i = 0; i < quantity; i++) {
+    if (!isOwner(sender)) {
+      user.points -= item.price
+    }
+    user.inventory.push({ id: item.id, name: item.name, boughtAt: new Date().toISOString() })
+  }
   saveUser(sender, user)
   
   return {
     success: true,
     item: item,
-    message: `${item.emoji} *${item.name}* berhasil dibeli!\n\n💰 Sisa saldo: ${formatNumber(user.points)} poin`
+    quantity: quantity,
+    message: `${item.emoji} *${item.name}* x${quantity} berhasil dibeli!\n\n💰 Sisa saldo: ${formatNumber(getBalance(sender))} poin`
   }
 }
 
@@ -816,6 +866,7 @@ module.exports = {
   getBalance,
   getUser,
   saveUser,
+  isOwner,
   
   // Daily
   claimDaily,
@@ -826,6 +877,8 @@ module.exports = {
   // Shop
   getShop,
   buyItem,
+  findItem,
+  ITEM_ALIASES,
   
   // Leaderboard
   getLeaderboard,

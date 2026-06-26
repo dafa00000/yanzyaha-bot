@@ -669,8 +669,26 @@ case 'download':
           break
         }
         case 'buy': {
-          if (!text) { await sendText('❌ Contoh: .buy shield'); break }
-          const result = economy.buyItem(sender, text.trim().toLowerCase())
+          if (!text) { await sendText('❌ Contoh: .buy shield\nAtau: .buy shield 5 (beli 5 sekaligus)'); break }
+          
+          // Parse: .buy [item name] [quantity]
+          const buyParts = text.trim().split(/\s+/)
+          let quantity = 1
+          let itemQuery = ''
+          
+          // Check if last part is a number (quantity)
+          const lastPart = buyParts[buyParts.length - 1]
+          if (/^\d+$/.test(lastPart) && buyParts.length > 1) {
+            quantity = parseInt(lastPart)
+            itemQuery = buyParts.slice(0, -1).join(' ')
+          } else {
+            itemQuery = text.trim()
+          }
+          
+          if (quantity < 1) quantity = 1
+          if (quantity > 100) quantity = 100
+          
+          const result = economy.buyItem(sender, itemQuery.toLowerCase(), quantity)
           await sendText(result.message)
           break
         }
