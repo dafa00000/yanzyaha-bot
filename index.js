@@ -774,7 +774,8 @@ case 'download':
         case 'leaderboard':
         case 'ranking': {
           const lb = economy.getLeaderboard(10)
-          await sendText(economy.formatLeaderboard(lb))
+          const { text: lbText, mentions } = economy.formatLeaderboard(lb)
+          await sock.sendMessage(from, { text: lbText, mentions }, { quoted: msg })
           break
         }
         

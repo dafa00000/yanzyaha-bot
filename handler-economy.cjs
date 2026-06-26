@@ -281,19 +281,22 @@ function getLeaderboard(limit = 10) {
 }
 
 function formatLeaderboard(lb) {
-  if (lb.length === 0) return 'Belum ada data leaderboard!'
+  if (lb.length === 0) return { text: 'Belum ada data leaderboard!', mentions: [] }
   
   const medals = ['🥇', '🥈', '🥉']
   let text = '🏆 *LEADERBOARD*\n\n'
+  const mentions = []
   
   lb.forEach((user, i) => {
     const medal = medals[i] || `${i + 1}.`
+    const jid = user.id.includes('@') ? user.id : user.id + '@s.whatsapp.net'
+    mentions.push(jid)
     text += `${medal} @${user.id}\n`
     text += `   💰 ${formatNumber(user.points)} poin | ⭐ Level ${user.level}\n\n`
   })
   
   text += `_Ketik .balance buat cek saldo lo_`
-  return text
+  return { text, mentions }
 }
 
 // ─── SLOT MACHINE ─────────────────────────────────────────────
