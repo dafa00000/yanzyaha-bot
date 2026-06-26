@@ -127,6 +127,15 @@ const SECTIONS = {
       { type: 'info', text: '◇ Kosong = pake default Railway' },
     ],
   },
+  personalConfigRestricted: {
+    title: '⚙️ PERSONAL CONFIG',
+    items: [
+      { type: 'cmd', cmd: '.setapikey <key>', desc: 'Set API key pribadi' },
+      { type: 'cmd', cmd: '.setbaseurl <url>', desc: 'Set base URL pribadi' },
+      { type: 'cmd', cmd: '.myconfig', desc: 'Lihat config lo' },
+      { type: 'cmd', cmd: '.resetmyconfig', desc: 'Hapus config custom' },
+    ],
+  },
   ownerConfig: {
     title: '👑 OWNER CONFIG',
     ownerOnly: true,
@@ -304,8 +313,8 @@ const OWNER_EXTRA_SECTIONS = {
   },
 }
 
-// Sections khusus RESTRICTED GROUP (cuma 4: INFO, AI, SEARCH, DOWNLOAD)
-const RESTRICTED_SECTIONS = ['info', 'ai', 'search', 'download']
+// Sections khusus RESTRICTED GROUP (5: INFO, AI, SEARCH, DOWNLOAD, PERSONAL CONFIG)
+const RESTRICTED_SECTIONS = ['info', 'ai', 'search', 'download', 'personalConfigRestricted']
 
 // ─── RENDER ENGINE ────────────────────────────────────────────
 // Style: OPEN BOX (narrow top/bottom, wide body, no right border)
