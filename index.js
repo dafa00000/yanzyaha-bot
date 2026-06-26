@@ -736,6 +736,7 @@ case 'download':
         case 'myapikey':
         case 'mybaseurl':
         case 'mymodel':
+        case 'mykeys':
         case 'resetmyconfig':
         case 'clearmyconfig':
         case 'apitest':
