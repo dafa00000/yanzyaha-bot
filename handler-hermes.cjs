@@ -480,7 +480,7 @@ async function saveHistory(sender, messages) {
 async function directChat(prompt, opts = {}) {
   const baseUrl = (opts.userEnv && opts.userEnv.OPENAI_BASE_URL) || process.env.OPENAI_BASE_URL || 'https://api.tokenrouter.com/v1'
   const apiKey = (opts.userEnv && opts.userEnv.OPENAI_API_KEY) || process.env.OPENAI_API_KEY
-  const model = (opts.userEnv && opts.userEnv.HERMES_MODEL) || opts.model || process.env.HERMES_MODEL || 'MiniMax-M3'
+  const model = (opts.userEnv && opts.userEnv.HERMES_MODEL) || opts.model || process.env.HERMES_MODEL || 'claude-opus-4-8'
 
   if (!apiKey) {
     throw new Error('🔑 OPENAI_API_KEY belum di-set.\\n\\nSet di Railway Variables atau `.setapikey <key>`')
