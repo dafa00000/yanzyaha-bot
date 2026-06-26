@@ -19,15 +19,16 @@ RUN if command -v apk >/dev/null 2>&1; then \
       echo "ERROR: no apk or apt-get found"; exit 1; \
     fi
 
-# Install yt-dlp — coba pip3, fallback ke python3 -m pip (lebih portable)
+# Install yt-dlp + edge-tts — coba pip3, fallback ke python3 -m pip (lebih portable)
 RUN if command -v pip3 >/dev/null 2>&1; then \
-      pip3 install --no-cache-dir --break-system-packages yt-dlp faster-whisper; \
+      pip3 install --no-cache-dir --break-system-packages yt-dlp faster-whisper edge-tts; \
     elif command -v python3 >/dev/null 2>&1; then \
-      python3 -m pip install --no-cache-dir --break-system-packages yt-dlp faster-whisper; \
+      python3 -m pip install --no-cache-dir --break-system-packages yt-dlp faster-whisper edge-tts; \
     else \
       echo "ERROR: no pip available for yt-dlp"; exit 1; \
     fi \
-    && yt-dlp --version
+    && yt-dlp --version \
+    && edge-tts --list-voices > /dev/null 2>&1 && echo "edge-tts installed OK" || echo "edge-tts check skipped"
 
 # Install Deno — JS runtime untuk yt-dlp (YouTube butuh JS extraction
 # sejak 2024; tanpa runtime → 403 Forbidden)
