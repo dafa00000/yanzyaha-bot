@@ -635,10 +635,18 @@ case 'download':
         case 'bal': {
           const bal = economy.getBalance(sender)
           const user = economy.getUser(sender)
+          const rank = economy.getRank(sender)
+          const progressBar = economy.formatProgressBar(rank.progress, 10)
+          const isOwnerUser = economy.isOwner(sender)
+          
+          // Owner shows unlimited
+          const balDisplay = isOwnerUser ? '∞ *Unlimited*' : `💎 ${economy.formatNumber(bal)} poin`
+          
           await sendText(
             `💰 *SALDO LO*\n\n` +
-            `💎 ${economy.formatNumber(bal)} poin\n` +
-            `⭐ Level ${user.level}\n` +
+            `${balDisplay}\n` +
+            `${rank.label}\n` +
+            `📊 ${progressBar}\n` +
             `🎮 ${user.totalGames} game dimainkan\n` +
             `🏆 ${user.wins} menang | ${user.losses} kalah`
           )
@@ -853,7 +861,7 @@ case 'download':
           if (result.success) {
             await sock.sendMessage(from, {
               audio: { url: result.path },
-              mimetype: 'audio/mpeg',
+              mimetype: 'audio/ogg; codecs=opus',
               ptt: true // Push to talk = voice note
             }, { quoted: msg })
             // Cleanup

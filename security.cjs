@@ -13,7 +13,7 @@
 //   7. Per-user rate limit (in-memory; resets on redeploy)
 
 // ─── LIMITS ──────────────────────────────────────────────────────────────────
-const MAX_MESSAGE_LENGTH = 2000       // hard cap per user message (chars)
+const MAX_MESSAGE_LENGTH = 999999       // no limit — user can send long prompts/code
 const RATE_LIMIT_MAX = 20             // max messages per window
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000  // 1 hour
 

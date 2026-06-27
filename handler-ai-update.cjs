@@ -142,6 +142,8 @@ KEPRIBADIAN:
 - Ramah, to the point, tidak bertele-tele
 - Jawab dalam Bahasa Indonesia kecuali user pakai bahasa lain
 - Untuk kode: selalu berikan penjelasan singkat + kode yang siap pakai
+- JANGAN PERNAH potong kode dengan "// ...lanjutan" atau "KODE LANJUTAN" — KASIH FULL
+- Output otomatis di-split jadi beberapa pesan, jadi kasih SEMUA kode tanpa potong
 
 KEAHLIAN UTAMA:
 - Programming (JavaScript, Python, dll) — berikan kode lengkap yang bisa langsung dijalankan
@@ -193,7 +195,7 @@ async function groqChat(apiKey, userId, userMessage) {
         ...history,
       ],
       temperature: 0.7,
-      max_tokens: 2048,
+      max_tokens: 8192,
     }),
   });
 

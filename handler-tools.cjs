@@ -145,37 +145,35 @@ function calculate(expression) {
 
 // ─── VOICE NOTE ───────────────────────────────────────────────
 // Pakai edge-tts (Microsoft) dengan suara imut
+// Convert MP3 → OGG/Opus biar WhatsApp detect sebagai voice note
 async function textToVoice(text, voice = 'en-US-AnaNeural') {
   try {
     const tmpDir = path.join(process.env.HERMES_HOME || '/opt/data', 'tmp')
     if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
     
-    const outputFile = path.join(tmpDir, `vn_${Date.now()}.mp3`)
+    const ts = Date.now()
+    const mp3File = path.join(tmpDir, `vn_${ts}.mp3`)
+    const oggFile = path.join(tmpDir, `vn_${ts}.ogg`)
     
     // Sanitize text - remove special chars that might break command
     const safeText = text.replace(/["'`\\]/g, '').replace(/\n/g, ' ')
     
-    // Pakai edge-tts dengan spawn untuk handle yang lebih reliable
+    // Step 1: Generate MP3 with edge-tts
     const { spawn } = require('child_process')
     
-    return new Promise((resolve, reject) => {
+    await new Promise((resolve, reject) => {
       const proc = spawn('edge-tts', [
         '--voice', voice,
         '--text', safeText,
-        '--write-media', outputFile
-      ], { timeout: 30000 })
+        '--write-media', mp3File
+      ], { timeout: 60000 })
       
       let stderr = ''
       proc.stderr.on('data', d => stderr += d.toString())
       
       proc.on('close', (code) => {
-        if (code === 0 && fs.existsSync(outputFile)) {
-          resolve({
-            success: true,
-            path: outputFile,
-            voice: voice,
-            message: '🎤 Voice note berhasil dibuat!'
-          })
+        if (code === 0 && fs.existsSync(mp3File)) {
+          resolve()
         } else {
           reject(new Error(`edge-tts exit code ${code}: ${stderr}`))
         }
@@ -185,10 +183,50 @@ async function textToVoice(text, voice = 'en-US-AnaNeural') {
         reject(new Error(`edge-tts error: ${err.message}`))
       })
     })
+
+    // Step 2: Convert MP3 → OGG/Opus (WhatsApp voice note format)
+    await new Promise((resolve, reject) => {
+      const proc = spawn('ffmpeg', [
+        '-y',                    // overwrite
+        '-i', mp3File,           // input
+        '-c:a', 'libopus',       // Opus codec
+        '-b:a', '128k',          // bitrate
+        '-vn',                   // no video
+        '-ar', '48000',          // sample rate
+        '-ac', '1',              // mono
+        '-application', 'voip',  // optimized for voice
+        oggFile
+      ], { timeout: 30000 })
+
+      let stderr = ''
+      proc.stderr.on('data', d => stderr += d.toString())
+
+      proc.on('close', (code) => {
+        // Cleanup MP3
+        try { fs.unlinkSync(mp3File) } catch {}
+        if (code === 0 && fs.existsSync(oggFile)) {
+          resolve()
+        } else {
+          reject(new Error(`ffmpeg exit code ${code}: ${stderr.slice(-200)}`))
+        }
+      })
+
+      proc.on('error', (err) => {
+        try { fs.unlinkSync(mp3File) } catch {}
+        reject(new Error(`ffmpeg error: ${err.message}`))
+      })
+    })
+
+    return {
+      success: true,
+      path: oggFile,
+      voice: voice,
+      message: '🎤 Voice note berhasil dibuat!'
+    }
   } catch (err) {
     return {
       success: false,
-      message: `❌ Gagal bikin voice note: ${err.message}\n\nPastikan edge-tts terinstall: pip install edge-tts`
+      message: `❌ Gagal bikin voice note: ${err.message}\n\nPastikan edge-tts & ffmpeg terinstall:\npip install edge-tts\napt install ffmpeg`
     }
   }
 }

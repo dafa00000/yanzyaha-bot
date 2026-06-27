@@ -6,10 +6,11 @@
  * Fitur:
  * - Point system (menang game = +poin, kalah = -poin)
  * - Daily reward
- * - Balance check
+ * - Balance check (owner = unlimited ∞)
  * - Transfer antar user
  * - Shop beli item
- * - Leaderboard
+ * - Leaderboard dengan @mention langsung
+ * - Rank system (Bronze → Silver → Gold → Platinum → Diamond → Master → Grandmaster → Legend → 👑Owner)
  * - Slot, Blackjack, Roulette
  * - Trivia, Word Game, Number Guess Multiplayer
  */
@@ -55,7 +56,6 @@ function getUser(sender) {
   if (!users[id]) {
     users[id] = {
       points: 0,
-      level: 1,
       xp: 0,
       dailyStreak: 0,
       lastDaily: null,
@@ -65,6 +65,11 @@ function getUser(sender) {
       inventory: [],
       createdAt: new Date().toISOString()
     }
+    saveJSON(USERS_FILE, users)
+  }
+  // Migration: remove old level field if exists
+  if (users[id].level !== undefined) {
+    delete users[id].level
     saveJSON(USERS_FILE, users)
   }
   return users[id]
@@ -82,6 +87,7 @@ function getToday() {
 }
 
 function formatNumber(n) {
+  if (n >= 1000000000) return (n / 1000000000).toFixed(1) + 'B'
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
   return n.toString()
@@ -91,18 +97,84 @@ function getRandomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
+// ─── RANK SYSTEM ──────────────────────────────────────────────
+// XP-based ranks with progress percentage
+const RANKS = [
+  { name: 'Bronze',      emoji: '🥉', minXp: 0,          color: '' },
+  { name: 'Silver',      emoji: '🥈', minXp: 500,        color: '' },
+  { name: 'Gold',        emoji: '🥇', minXp: 2000,       color: '' },
+  { name: 'Platinum',    emoji: '💎', minXp: 5000,       color: '' },
+  { name: 'Diamond',     emoji: '💠', minXp: 12000,      color: '' },
+  { name: 'Master',      emoji: '🔥', minXp: 25000,      color: '' },
+  { name: 'Grandmaster', emoji: '⭐', minXp: 50000,      color: '' },
+  { name: 'Legend',      emoji: '🌟', minXp: 100000,     color: '' },
+  { name: 'God',         emoji: '🔱', minXp: 2000000,    color: '' },
+]
+
+function getRank(sender) {
+  // Owner always gets highest rank
+  if (isOwner(sender)) {
+    return {
+      name: 'Owner',
+      emoji: '👑',
+      index: RANKS.length,
+      progress: 100,
+      xp: Infinity,
+      minXp: Infinity,
+      nextXp: Infinity,
+      label: '👑 Owner'
+    }
+  }
+
+  const user = getUser(sender)
+  const xp = user.xp || 0
+
+  // Find current rank (highest where xp >= minXp)
+  let currentRank = RANKS[0]
+  for (let i = RANKS.length - 1; i >= 0; i--) {
+    if (xp >= RANKS[i].minXp) {
+      currentRank = RANKS[i]
+      break
+    }
+  }
+
+  const currentIndex = RANKS.indexOf(currentRank)
+  const isMaxRank = currentIndex === RANKS.length - 1
+
+  // Calculate progress to next rank
+  let progress = 100
+  let nextXp = currentRank.minXp
+  if (!isMaxRank) {
+    const nextRank = RANKS[currentIndex + 1]
+    const xpInCurrentRank = xp - currentRank.minXp
+    const xpNeeded = nextRank.minXp - currentRank.minXp
+    progress = Math.min(100, Math.floor((xpInCurrentRank / xpNeeded) * 100))
+    nextXp = nextRank.minXp
+  }
+
+  return {
+    name: currentRank.name,
+    emoji: currentRank.emoji,
+    index: currentIndex,
+    progress,
+    xp,
+    minXp: currentRank.minXp,
+    nextXp,
+    label: `${currentRank.emoji} ${currentRank.name}`
+  }
+}
+
+function formatProgressBar(percent, length = 10) {
+  const filled = Math.round((percent / 100) * length)
+  const empty = length - filled
+  return '█'.repeat(filled) + '░'.repeat(empty) + ` ${percent}%`
+}
+
 // ─── POINT SYSTEM ─────────────────────────────────────────────
 function addPoints(sender, amount) {
   const user = getUser(sender)
   user.points += amount
   user.xp += Math.abs(amount)
-  
-  // Level up setiap 500 XP
-  const newLevel = Math.floor(user.xp / 500) + 1
-  if (newLevel > user.level) {
-    user.level = newLevel
-  }
-  
   saveUser(sender, user)
   return user
 }
@@ -116,7 +188,7 @@ function removePoints(sender, amount) {
 }
 
 function getBalance(sender) {
-  if (isOwner(sender)) return 999999999 // Owner unlimited
+  if (isOwner(sender)) return '∞' // Owner unlimited
   const user = getUser(sender)
   return user.points
 }
@@ -291,8 +363,18 @@ function formatLeaderboard(lb) {
     const medal = medals[i] || `${i + 1}.`
     const jid = user.id.includes('@') ? user.id : user.id + '@s.whatsapp.net'
     mentions.push(jid)
+    
+    // Get rank for this user — filter owner tier from display
+    const rank = getRank(jid)
+    const isOwnerUser = isOwner(jid)
+    const displayRank = isOwnerUser
+      ? '🔱 God'
+      : `${rank.emoji} ${rank.name}`
+    const progress = formatProgressBar(isOwnerUser ? 100 : rank.progress, 5)
+    
     text += `${medal} @${user.id}\n`
-    text += `   💰 ${formatNumber(user.points)} poin | ⭐ Level ${user.level}\n\n`
+    text += `   💰 ${formatNumber(user.points)} poin\n`
+    text += `   ${displayRank} ${progress}\n\n`
   })
   
   text += `_Ketik .balance buat cek saldo lo_`
@@ -870,6 +952,11 @@ module.exports = {
   getUser,
   saveUser,
   isOwner,
+  
+  // Rank system
+  getRank,
+  formatProgressBar,
+  RANKS,
   
   // Daily
   claimDaily,
