@@ -237,83 +237,90 @@ function cobaltFallback(url) {
     `Paste link ini:\n${url}`
 }
 
-// ─── TWITTER/X DOWNLOAD VIA API ──────────────────────────────────────────────
-// Try multiple free APIs for Twitter/X video downloads
-async function downloadViaTwitterAPI(url) {
+// ─── TWITTER/X DOWNLOAD VIA API (ZERO DISK) ─────────────────────────────────
+// Returns direct video URL — no file download to disk.
+// WhatsApp fetches the video from CDN directly (like Telegram sendVideo pattern).
+// Fallback chain: vxtwitter → fxtwitter → fixupx → ddinstagram → cobalt → yt-dlp
+async function getTwitterVideoUrl(url) {
   const clean = url.split('?')[0]
-
-  // Strategy 1: vxtwitter/fxtwitter API (returns direct video URLs from tweet)
   const tweetId = clean.match(/status\/(\d+)/)?.[1]
-  if (tweetId) {
-    // Try vxtwitter → fxtwitter → fixupx chain (all are tweet embed proxies)
-    for (const domain of ['vxtwitter', 'fxtwitter', 'fixupx']) {
-      try {
-        const apiUrl = `https://${domain}.com/i/status/${tweetId}`
-        const res = await axios.get(apiUrl, {
-          timeout: 20000,
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-          validateStatus: s => s < 500,
-        })
-        const media = res.data?.tweet?.media?.videos
-        if (media?.length > 0) {
-          const videoUrl = media[0].url || media[0].variants?.find(v => v.content_type === 'video/mp4')?.url
-          if (videoUrl) {
-            console.log(`[twitter-api] success via ${domain}`)
-            // Download video to file
-            const filePath = path.join(TMP_DIR, `${Date.now()}.mp4`)
-            const videoRes = await axios.get(videoUrl, { responseType: 'stream', timeout: TIMEOUT })
-            await new Promise((resolve, reject) => {
-              const writer = fs.createWriteStream(filePath)
-              videoRes.data.pipe(writer)
-              writer.on('finish', resolve)
-              writer.on('error', reject)
-            })
-            return { filePath, source: domain }
+  if (!tweetId) return null
+
+  // Strategy 1: Tweet embed proxy APIs (fastest, no auth needed)
+  const embedDomains = ['vxtwitter', 'fxtwitter', 'fixupx']
+  for (const domain of embedDomains) {
+    try {
+      const apiUrl = `https://${domain}.com/i/status/${tweetId}`
+      const res = await axios.get(apiUrl, {
+        timeout: 15000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+        validateStatus: s => s < 500,
+      })
+      const tweet = res.data?.tweet
+      if (!tweet) continue
+
+      // Check for video in media
+      const videos = tweet.media?.videos
+      if (videos?.length > 0) {
+        // Pick best quality: prefer URL with highest bitrate, or first available
+        let bestUrl = null
+        for (const v of videos) {
+          // Check variants for highest bitrate mp4
+          if (v.variants?.length > 0) {
+            const mp4s = v.variants.filter(vr => vr.content_type === 'video/mp4' && vr.url)
+            if (mp4s.length > 0) {
+              bestUrl = mp4s.reduce((best, cur) =>
+                (cur.bitrate || 0) > (best.bitrate || 0) ? cur : best
+              ).url
+            }
           }
+          if (!bestUrl && v.url) bestUrl = v.url
         }
-      } catch (err) {
-        console.error(`[twitter-api] ${domain} failed:`, err.message)
+        if (bestUrl) {
+          console.log(`[twitter-api] ✅ got URL via ${domain} (no disk)`)
+          return { videoUrl: bestUrl, source: domain, type: 'direct' }
+        }
       }
+
+      // Check for external media (quote tweet video, etc)
+      const external = tweet.media?.external
+      if (external?.url) {
+        console.log(`[twitter-api] ✅ got external URL via ${domain}`)
+        return { videoUrl: external.url, source: domain, type: 'direct' }
+      }
+
+      // Check photos — return first photo URL
+      const photos = tweet.media?.photos
+      if (photos?.length > 0) {
+        console.log(`[twitter-api] ✅ got photo URL via ${domain}`)
+        return { photoUrl: photos[0].url || photos[0].direct_url, source: domain, type: 'photo' }
+      }
+    } catch (err) {
+      console.error(`[twitter-api] ${domain} failed:`, err.message)
     }
   }
 
-  // Strategy 2: cobalt API (public instances + optional self-host via COBALT_URL env)
+  // Strategy 2: Cobalt API (returns direct URL, no disk needed)
   const cobaltInstances = process.env.COBALT_URL
     ? [process.env.COBALT_URL]
     : [
+        'https://api.cobalt.tools/',
         'https://cobalt-api.kwiatekmiki.com/',
         'https://cobalt-api.utohub.com/',
-        'https://api.cobalt.tools/',
       ]
   for (const instance of cobaltInstances) {
     try {
       const apiUrl = instance.endsWith('/') ? instance.slice(0, -1) : instance
-      const res = await axios.post(apiUrl, {
-        url: clean,
-        filenamePattern: 'basic',
-      }, {
-        timeout: 90000,
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
+      const res = await axios.post(apiUrl, { url: clean, filenamePattern: 'basic' }, {
+        timeout: 60000,
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         validateStatus: s => s < 500,
       })
       const d = res.data
-      if (d?.url || d?.status === 'tunnel' || d?.status === 'redirect') {
-        const videoUrl = d.url || d.streamUrl
-        if (videoUrl) {
-          const filePath = path.join(TMP_DIR, `${Date.now()}.mp4`)
-          const videoRes = await axios.get(videoUrl, { responseType: 'stream', timeout: 120000 })
-          await new Promise((resolve, reject) => {
-            const writer = fs.createWriteStream(filePath)
-            videoRes.data.pipe(writer)
-            writer.on('finish', resolve)
-            writer.on('error', reject)
-          })
-          console.log(`[twitter-api] success via cobalt (${apiUrl})`)
-          return { filePath, source: 'cobalt' }
-        }
+      const videoUrl = d?.url || d?.streamUrl
+      if (videoUrl) {
+        console.log(`[twitter-api] ✅ got URL via cobalt (${apiUrl})`)
+        return { videoUrl, source: 'cobalt', type: 'direct' }
       }
     } catch (err) {
       console.error(`[twitter-api] cobalt ${instance} failed:`, err.message)
@@ -321,6 +328,21 @@ async function downloadViaTwitterAPI(url) {
   }
 
   return null
+}
+
+// Legacy wrapper — falls back to yt-dlp disk download if direct URL fails
+async function downloadViaTwitterAPI(url) {
+  const result = await getTwitterVideoUrl(url)
+  if (result?.videoUrl) return result
+
+  // Fallback: yt-dlp (downloads to disk)
+  try {
+    const filePath = await downloadWithYtdlp(url)
+    return { filePath, source: 'yt-dlp', type: 'file' }
+  } catch (e) {
+    console.error(`[twitter-api] yt-dlp fallback failed:`, e.message)
+    return null
+  }
 }
 
 export async function handleDownload(sock, msg, text, command) {
@@ -434,15 +456,34 @@ export async function handleDownload(sock, msg, text, command) {
     await sendText('⏳ Sedang mengunduh dari Twitter/X...')
     let filePath = null
     try {
-      // Strategy 1: API (vxtwitter/fxtwitter → cobalt)
+      // Strategy 1: Direct URL (zero disk usage — WA fetches from CDN)
+      const result = await getTwitterVideoUrl(url)
+      if (result?.videoUrl) {
+        console.log(`[twdl] ✅ sending direct URL via ${result.source} (zero disk)`)
+        await sock.sendMessage(from, {
+          video: { url: result.videoUrl },
+          caption: `🐦 Downloaded by WA Bot — *${result.source}*`,
+          mimetype: 'video/mp4'
+        }, { quoted: msg })
+        return
+      }
+      if (result?.photoUrl) {
+        console.log(`[twdl] ✅ sending photo URL via ${result.source}`)
+        await sock.sendMessage(from, {
+          image: { url: result.photoUrl },
+          caption: `🐦 Downloaded by WA Bot — *${result.source}*`
+        }, { quoted: msg })
+        return
+      }
+      // Strategy 2: Legacy API download (to disk)
       const apiResult = await downloadViaTwitterAPI(url)
-      if (apiResult) {
+      if (apiResult?.filePath) {
         filePath = apiResult.filePath
-        console.log(`[twdl] downloaded via ${apiResult.source}`)
+        console.log(`[twdl] downloaded via ${apiResult.source} (disk fallback)`)
         await sock.sendMessage(from, { video: fs.readFileSync(filePath), caption: `🐦 Downloaded by WA Bot — *${apiResult.source}*`, mimetype: 'video/mp4' }, { quoted: msg })
         return
       }
-      // Strategy 2: yt-dlp fallback
+      // Strategy 3: yt-dlp direct fallback
       filePath = await downloadWithYtdlp(url)
       await sock.sendMessage(from, { video: fs.readFileSync(filePath), caption: '🐦 Downloaded by WA Bot', mimetype: 'video/mp4' }, { quoted: msg })
     } catch (err) {
