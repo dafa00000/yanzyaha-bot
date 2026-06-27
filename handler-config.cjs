@@ -182,7 +182,10 @@ function getEffectiveEnv(sender) {
   // Override with per-user
   const userCfg = getUserConfig(sender)
   for (const [k, v] of Object.entries(userCfg)) {
-    if (v) env[k] = String(v)
+    if (v != null && v !== '') {
+      // Preserve arrays, convert everything else to string
+      env[k] = Array.isArray(v) ? v : String(v)
+    }
   }
   return env
 }
