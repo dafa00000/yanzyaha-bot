@@ -240,32 +240,33 @@ function cobaltFallback(url) {
 // ─── TWITTER/X DOWNLOAD VIA API (ZERO DISK) ─────────────────────────────────
 // Returns direct video URL — no file download to disk.
 // WhatsApp fetches the video from CDN directly (like Telegram sendVideo pattern).
-// Fallback chain: vxtwitter → fxtwitter → fixupx → ddinstagram → cobalt → yt-dlp
+// Fallback chain: fxtwitter API → vxtwitter API → cobalt → yt-dlp
 async function getTwitterVideoUrl(url) {
   const clean = url.split('?')[0]
   const tweetId = clean.match(/status\/(\d+)/)?.[1]
-  if (!tweetId) return null
+  if (!tweetId) {
+    console.error('[twitter-api] no tweet ID found in URL:', clean)
+    return null
+  }
 
-  // Strategy 1: Tweet embed proxy APIs (fastest, no auth needed)
-  const embedDomains = ['vxtwitter', 'fxtwitter', 'fixupx']
-  for (const domain of embedDomains) {
-    try {
-      const apiUrl = `https://${domain}.com/i/status/${tweetId}`
-      const res = await axios.get(apiUrl, {
-        timeout: 15000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
-        validateStatus: s => s < 500,
-      })
-      const tweet = res.data?.tweet
-      if (!tweet) continue
-
-      // Check for video in media
+  // Strategy 1: fxtwitter API (most reliable, returns bitrate variants)
+  // API format: https://api.fxtwitter.com/i/status/{tweetId}
+  try {
+    const apiUrl = `https://api.fxtwitter.com/i/status/${tweetId}`
+    console.log(`[twitter-api] trying fxtwitter...`)
+    const res = await axios.get(apiUrl, {
+      timeout: 15000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      validateStatus: s => s < 500,
+    })
+    const tweet = res.data?.tweet
+    if (tweet) {
+      // Check for video
       const videos = tweet.media?.videos
       if (videos?.length > 0) {
-        // Pick best quality: prefer URL with highest bitrate, or first available
+        // Pick highest bitrate MP4
         let bestUrl = null
         for (const v of videos) {
-          // Check variants for highest bitrate mp4
           if (v.variants?.length > 0) {
             const mp4s = v.variants.filter(vr => vr.content_type === 'video/mp4' && vr.url)
             if (mp4s.length > 0) {
@@ -277,40 +278,74 @@ async function getTwitterVideoUrl(url) {
           if (!bestUrl && v.url) bestUrl = v.url
         }
         if (bestUrl) {
-          console.log(`[twitter-api] ✅ got URL via ${domain} (no disk)`)
-          return { videoUrl: bestUrl, source: domain, type: 'direct' }
+          console.log(`[twitter-api] ✅ got video URL via fxtwitter (no disk)`)
+          return { videoUrl: bestUrl, source: 'fxtwitter', type: 'direct' }
         }
       }
-
-      // Check for external media (quote tweet video, etc)
-      const external = tweet.media?.external
-      if (external?.url) {
-        console.log(`[twitter-api] ✅ got external URL via ${domain}`)
-        return { videoUrl: external.url, source: domain, type: 'direct' }
-      }
-
-      // Check photos — return first photo URL
+      // Check photos
       const photos = tweet.media?.photos
       if (photos?.length > 0) {
-        console.log(`[twitter-api] ✅ got photo URL via ${domain}`)
-        return { photoUrl: photos[0].url || photos[0].direct_url, source: domain, type: 'photo' }
+        console.log(`[twitter-api] ✅ got photo URL via fxtwitter`)
+        return { photoUrl: photos[0].url || photos[0].direct_url, source: 'fxtwitter', type: 'photo' }
       }
-    } catch (err) {
-      console.error(`[twitter-api] ${domain} failed:`, err.message)
+      console.log(`[twitter-api] fxtwitter: tweet found but no media (text-only tweet?)`)
     }
+  } catch (err) {
+    console.error(`[twitter-api] fxtwitter failed:`, err.message)
   }
 
-  // Strategy 2: Cobalt API (returns direct URL, no disk needed)
+  // Strategy 2: vxtwitter API (different JSON format, direct URLs)
+  // API format: https://api.vxtwitter.com/i/status/{tweetId}
+  try {
+    const apiUrl = `https://api.vxtwitter.com/i/status/${tweetId}`
+    console.log(`[twitter-api] trying vxtwitter...`)
+    const res = await axios.get(apiUrl, {
+      timeout: 15000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      validateStatus: s => s < 500,
+    })
+    const data = res.data
+    if (data?.hasMedia) {
+      // vxtwitter uses mediaURLs[] (direct URLs, highest quality already)
+      const mediaUrls = data.mediaURLs || []
+      const mediaExt = data.media_extended || []
+
+      // Check if it's a video
+      for (let i = 0; i < mediaExt.length; i++) {
+        if (mediaExt[i].type === 'video' && mediaUrls[i]) {
+          console.log(`[twitter-api] ✅ got video URL via vxtwitter (no disk)`)
+          return { videoUrl: mediaUrls[i], source: 'vxtwitter', type: 'direct' }
+        }
+      }
+      // Fallback: check if any mediaURL looks like video
+      for (const mUrl of mediaUrls) {
+        if (mUrl && mUrl.includes('.mp4')) {
+          console.log(`[twitter-api] ✅ got mp4 URL via vxtwitter (no disk)`)
+          return { videoUrl: mUrl, source: 'vxtwitter', type: 'direct' }
+        }
+      }
+      // It's a photo
+      if (mediaUrls.length > 0) {
+        console.log(`[twitter-api] ✅ got photo URL via vxtwitter`)
+        return { photoUrl: mediaUrls[0], source: 'vxtwitter', type: 'photo' }
+      }
+    }
+    console.log(`[twitter-api] vxtwitter: no media found`)
+  } catch (err) {
+    console.error(`[twitter-api] vxtwitter failed:`, err.message)
+  }
+
+  // Strategy 3: Cobalt API (returns direct URL, no disk needed)
   const cobaltInstances = process.env.COBALT_URL
     ? [process.env.COBALT_URL]
     : [
+        'https://co.eepy.today/',
         'https://api.cobalt.tools/',
-        'https://cobalt-api.kwiatekmiki.com/',
-        'https://cobalt-api.utohub.com/',
       ]
   for (const instance of cobaltInstances) {
     try {
       const apiUrl = instance.endsWith('/') ? instance.slice(0, -1) : instance
+      console.log(`[twitter-api] trying cobalt ${apiUrl}...`)
       const res = await axios.post(apiUrl, { url: clean, filenamePattern: 'basic' }, {
         timeout: 60000,
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
@@ -327,20 +362,22 @@ async function getTwitterVideoUrl(url) {
     }
   }
 
+  console.log(`[twitter-api] ❌ all direct URL methods failed for tweet ${tweetId}`)
   return null
 }
 
 // Legacy wrapper — falls back to yt-dlp disk download if direct URL fails
 async function downloadViaTwitterAPI(url) {
   const result = await getTwitterVideoUrl(url)
-  if (result?.videoUrl) return result
+  if (result?.videoUrl || result?.photoUrl) return result
 
   // Fallback: yt-dlp (downloads to disk)
   try {
+    console.log(`[twitter-api] falling back to yt-dlp (disk download)...`)
     const filePath = await downloadWithYtdlp(url)
     return { filePath, source: 'yt-dlp', type: 'file' }
   } catch (e) {
-    console.error(`[twitter-api] yt-dlp fallback failed:`, e.message)
+    console.error(`[twitter-api] yt-dlp fallback failed:`, e.message?.slice(0, 200))
     return null
   }
 }
