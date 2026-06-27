@@ -26,7 +26,7 @@ const CONFIG_PATH = path.join(HERMES_HOME, 'config.json')
 const USER_CONFIG_PATH = path.join(HERMES_HOME, 'user_configs.json')
 
 // Env vars yang boleh di-set per-user
-const USER_KEYS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'HERMES_MODEL']
+const USER_KEYS = ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'HERMES_MODEL', 'API_KEYS', 'API_KEY_INDEX']
 
 // Whitelist env vars yang boleh di-set GLOBAL (owner only)
 const ALLOWED_KEYS = [
@@ -145,8 +145,12 @@ function setUserConfig(sender, updates) {
   const updated = { ...cur }
   for (const [k, v] of Object.entries(updates)) {
     if (!USER_KEYS.includes(k)) continue
-    if (v != null && v !== '') updated[k] = String(v)
-    else delete updated[k] // unset kalo empty
+    if (v != null && v !== '') {
+      // Preserve arrays, convert everything else to string
+      updated[k] = Array.isArray(v) ? v : String(v)
+    } else {
+      delete updated[k] // unset kalo empty
+    }
   }
   if (Object.keys(updated).length === 0) {
     userConfigs.delete(sender)
