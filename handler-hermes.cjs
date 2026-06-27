@@ -529,7 +529,7 @@ async function saveHistory(sender, messages) {
 async function directChat(prompt, opts = {}) {
   const baseUrl = (opts.userEnv && opts.userEnv.OPENAI_BASE_URL) || process.env.OPENAI_BASE_URL || 'https://api.badtheorylabs.com/v1'
   let apiKey = (opts.userEnv && opts.userEnv.OPENAI_API_KEY) || process.env.OPENAI_API_KEY
-  let model = (opts.userEnv && opts.userEnv.HERMES_MODEL) || opts.model || process.env.HERMES_MODEL || 'claude-opus-4-8'
+  let model = (opts.userEnv && opts.userEnv.HERMES_MODEL) || opts.model || process.env.HERMES_MODEL || 'gpt-4o-mini'
   
   // Multi-key rotation
   const allKeys = opts.userEnv?.API_KEYS || []
