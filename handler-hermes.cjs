@@ -86,7 +86,7 @@ const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
 const TIMEOUT_MS = parseInt(process.env.HERMES_TIMEOUT_MS || '180000', 10)
 const MAX_OUTPUT = 999999
 const MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || '16384', 10)
-const WA_MSG_LIMIT = 4000 // WhatsApp safe limit per message (practical, not theoretical)
+const WA_MSG_LIMIT = 999999 // No splitting — send full message
 const DEFAULT_MODEL = process.env.HERMES_MODEL || ''
 const DAILY_LIMIT = parseInt(process.env.WA_AI_DAILY_LIMIT || '0', 10) // 0 = unlimited
 const SOURCE_TAG = 'wa-bot'
@@ -584,17 +584,18 @@ function extractCodeBlocks(text) {
 }
 
 function langToCmd(lang, filePath) {
+  const safe = filePath.replace(/"/g, '\\"')
   const cmds = {
-    python: 'python3 "' + filePath + '"',
-    py: 'python3 "' + filePath + '"',
-    javascript: 'node "' + filePath + '"',
-    js: 'node "' + filePath + '"',
-    node: 'node "' + filePath + '"',
-    bash: 'bash "' + filePath + '"',
-    sh: 'bash "' + filePath + '"',
-    shell: 'bash "' + filePath + '"',
+    python: 'python3 ' + safe,
+    py: 'python3 ' + safe,
+    javascript: 'node ' + safe,
+    js: 'node ' + safe,
+    node: 'node ' + safe,
+    bash: 'bash ' + safe,
+    sh: 'bash ' + safe,
+    shell: 'bash ' + safe,
   }
-  return cmds[lang] || 'python3 "' + filePath + '"'
+  return cmds[lang] || 'python3 ' + safe
 }
 
 function langToExt(lang) {
@@ -608,20 +609,25 @@ async function executeCodeBlocks(text) {
 
   const results = []
   for (const block of blocks) {
+    // Skip non-executable blocks (config, markup, etc)
+    const skipLangs = ['json', 'yaml', 'yml', 'html', 'css', 'xml', 'markdown', 'md', 'text', 'txt', 'sql', '']
+    if (skipLangs.includes(block.lang)) continue
+
     const ext = langToExt(block.lang)
-    const tmpFile = path.join(os.tmpdir(), `exec_${Date.now()}${ext}`)
+    const tmpFile = path.join(os.tmpdir(), 'wa_exec_' + Date.now() + '_' + Math.random().toString(36).slice(2,6) + ext)
     try {
-      fs.writeFileSync(tmpFile, block.code)
+      fs.writeFileSync(tmpFile, block.code, { mode: 0o755 })
       const cmd = langToCmd(block.lang, tmpFile)
-      const output = execSync(cmd, { timeout: 30000, encoding: 'utf-8', maxBuffer: 1024 * 1024, stderr: 'pipe' })
-      results.push({ lang: block.lang, code: block.code, output: output.trim(), success: true })
+      const output = execSync(cmd, { timeout: 60000, encoding: 'utf-8', maxBuffer: 2 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] })
+      results.push({ lang: block.lang, output: (output || '').trim(), success: true })
     } catch (e) {
-      results.push({ lang: block.lang, code: block.code, output: (e.stderr || e.output?.[1] || e.message || '').trim(), success: false })
+      const errMsg = (e.stderr || e.stdout || e.message || '').trim()
+      results.push({ lang: block.lang, output: errMsg.slice(0, 2000), success: false })
     } finally {
       try { fs.unlinkSync(tmpFile) } catch {}
     }
   }
-  return results
+  return results.length > 0 ? results : null
 }
 
 async function directChat(prompt, opts = {}) {
