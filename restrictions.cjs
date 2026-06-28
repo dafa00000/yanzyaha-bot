@@ -79,6 +79,8 @@ const DEFAULT_RESTRICTED_GROUPS = {
     'setmodel',
     'models',
     'setapikey',
+    'setbaseurl',
+    'mykeys',
     'myconfig',
     'listcmd',
   ],
