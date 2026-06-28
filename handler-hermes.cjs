@@ -12,10 +12,12 @@
  *   - ⚠️ Railway ephemeral FS = session ilang tiap redeploy (kecuali pake Volume)
  */
 
-const { spawn } = require('child_process')
+const { spawn, execSync } = require('child_process')
 const sec = require('./security.cjs')
 const fsp = require('fs').promises
 const path = require('path')
+const os = require('os')
+const fs = require('fs')
 
 // History directory: $HERMES_HOME/sessions/wa-{sender}/history.json
 const HISTORY_DIR = path.join(process.env.HERMES_HOME || '/opt/data', 'sessions')
@@ -73,7 +75,8 @@ const SYSTEM_PROMPT = "Lo adalah AI assistant WhatsApp yang JAGO CODING, PINTER 
 "6. Code panjang? TETEP KASIH SEMUA — jangan potong, jangan pakai '// ...rest of code' atau 'KODE LANJUTAN' — KASIH FULL\n" +
 "7. User minta apa, KASIH ITU — jangan dikurangi\n" +
 "8. Output lo otomatis di-split jadi beberapa pesan kalau panjang, jadi ga perlu khawatir limit WhatsApp — TETEP KASIH SEMUA\n" +
-"9. Kalau bisa, RUN code yang lo kasih dan tunjukin hasilnya ke user\n" +
+"9. Kalau user minta run/execute code, LO KASIH KODE DALAM CODE BLOCK (\x60\x60\x60python ... \x60\x60\x60) — bot bakal otomatis execute dan kasih output-nya\n" +
+"10. Code block yang valid bakal di-run otomatis, jadi pastikan kode lo BENER dan LENGKAP\n" +
 "CONTOH YANG GA BOLEH:\n" +
 "- Maaf, saya tidak bisa...\n" +
 "- Oke, tapi saya perlu tahu dulu...\n" +
@@ -409,6 +412,18 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
       console.warn('[HERMES] runHermes failed, falling back to directChat:', hermesErr.message?.slice(0, 100))
       ans = await directChat(promptWithContent, { userEnv, _sender: sender })
     }
+
+    // Auto-execute code blocks in response
+    const execResults = await executeCodeBlocks(ans)
+    if (execResults && execResults.length > 0) {
+      let execOutput = ''
+      for (const r of execResults) {
+        const status = r.success ? '✅' : '❌'
+        execOutput += '\n' + status + ' Code executed (' + r.lang + '):\n```\n' + r.output.slice(0, 2000) + '\n```\n'
+      }
+      ans = ans + '\n\n📟 *Auto-Execute Result:*' + execOutput
+    }
+
     stopTyping(typing, sock, jid)
     // Sanitize reply: redact any leaked API keys before sending to user
     // Use replyLong to split code blocks that exceed WhatsApp limit
@@ -532,7 +547,7 @@ async function maybeFetchUrl(prompt) {
   }
   // Remove URL from prompt, prepend fetched content
   const cleanPrompt = prompt.replace(url, '').trim() || 'Jelasin file ini'
-  return 'User minta: ' + cleanPrompt + '\n\n=== Konten dari ' + url + ' (fetched ' + new Date().toISOString() + ') ===\n\`\`\`\n' + content + '\n\`\`\`'
+  return 'User minta: ' + cleanPrompt + '\n\n=== Konten dari ' + url + ' (fetched ' + new Date().toISOString() + ') ===\n```\n' + content + '\n```'
 }
 
 async function loadHistory(sender) {
@@ -553,6 +568,62 @@ async function saveHistory(sender, messages) {
   await fsp.mkdir(path.dirname(file), { recursive: true })
   const trimmed = messages.slice(-HISTORY_MAX)
   await fsp.writeFile(file, JSON.stringify({ messages: trimmed, updated: Date.now() }, null, 2))
+}
+
+// ─── LIGHTWEIGHT CODE EXECUTION ────────────────────────────────
+// Execute code blocks from AI response. No Hermes subprocess needed.
+function extractCodeBlocks(text) {
+  const blocks = []
+  const tick = String.fromCharCode(96).repeat(3)
+  const regex = new RegExp(tick + '(\\w*)\\n([\\s\\S]*?)' + tick, 'g')
+  let match
+  while ((match = regex.exec(text)) !== null) {
+    const lang = (match[1] || '').toLowerCase()
+    const code = match[2].trim()
+    if (code) blocks.push({ lang, code })
+  }
+  return blocks
+}
+
+function langToCmd(lang, filePath) {
+  const cmds = {
+    python: 'python3 "' + filePath + '"',
+    py: 'python3 "' + filePath + '"',
+    javascript: 'node "' + filePath + '"',
+    js: 'node "' + filePath + '"',
+    node: 'node "' + filePath + '"',
+    bash: 'bash "' + filePath + '"',
+    sh: 'bash "' + filePath + '"',
+    shell: 'bash "' + filePath + '"',
+  }
+  return cmds[lang] || 'python3 "' + filePath + '"'
+}
+
+function langToExt(lang) {
+  const map = { python: '.py', py: '.py', javascript: '.js', js: '.js', node: '.js', bash: '.sh', sh: '.sh', shell: '.sh' }
+  return map[lang] || '.py'
+}
+
+async function executeCodeBlocks(text) {
+  const blocks = extractCodeBlocks(text)
+  if (blocks.length === 0) return null
+
+  const results = []
+  for (const block of blocks) {
+    const ext = langToExt(block.lang)
+    const tmpFile = path.join(os.tmpdir(), `exec_${Date.now()}${ext}`)
+    try {
+      fs.writeFileSync(tmpFile, block.code)
+      const cmd = langToCmd(block.lang, tmpFile)
+      const output = execSync(cmd, { timeout: 30000, encoding: 'utf-8', maxBuffer: 1024 * 1024, stderr: 'pipe' })
+      results.push({ lang: block.lang, code: block.code, output: output.trim(), success: true })
+    } catch (e) {
+      results.push({ lang: block.lang, code: block.code, output: (e.stderr || e.output?.[1] || e.message || '').trim(), success: false })
+    } finally {
+      try { fs.unlinkSync(tmpFile) } catch {}
+    }
+  }
+  return results
 }
 
 async function directChat(prompt, opts = {}) {
@@ -736,6 +807,18 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
       console.warn('[HERMES] runHermes failed for .ai, falling back to directChat:', hermesErr.message?.slice(0, 100))
       ans = await directChat(prompt, { userEnv, _sender: '_ai_' + (sender || 'unknown') })
     }
+
+    // Auto-execute code blocks in response
+    const execResults2 = await executeCodeBlocks(ans)
+    if (execResults2 && execResults2.length > 0) {
+      let execOutput2 = ''
+      for (const r of execResults2) {
+        const status = r.success ? '✅' : '❌'
+        execOutput2 += '\n' + status + ' Code executed (' + r.lang + '):\n```\n' + r.output.slice(0, 2000) + '\n```\n'
+      }
+      ans = ans + '\n\n📟 *Auto-Execute Result:*' + execOutput2
+    }
+
     stopTyping(typing, sock, jid)
     await replyLong(sock, msg, sec.redactSecrets(ans.slice(0, MAX_OUTPUT)))
   } catch (e) {
