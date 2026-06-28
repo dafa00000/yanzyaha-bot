@@ -400,7 +400,15 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
   try {
     // Auto-fetch URL kalau ada di body
     const promptWithContent = await maybeFetchUrl(body)
-    const ans = await runHermes(promptWithContent, { userEnv, _sender: sender, toolsets: ['terminal', 'file'] })
+    let ans
+    try {
+      // Try with terminal+file tools first (can execute scripts)
+      ans = await runHermes(promptWithContent, { userEnv, _sender: sender, toolsets: ['terminal', 'file'] })
+    } catch (hermesErr) {
+      // Fallback: if Hermes subprocess fails (OOM, timeout, etc), use direct API
+      console.warn('[HERMES] runHermes failed, falling back to directChat:', hermesErr.message?.slice(0, 100))
+      ans = await directChat(promptWithContent, { userEnv, _sender: sender })
+    }
     stopTyping(typing, sock, jid)
     // Sanitize reply: redact any leaked API keys before sending to user
     // Use replyLong to split code blocks that exceed WhatsApp limit
@@ -721,7 +729,13 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
     let prompt = text.trim()
     // Auto-fetch URL kalau ada di prompt
     prompt = await maybeFetchUrl(prompt)
-    const ans = await runHermes(prompt, { userEnv, _sender: '_ai_' + (sender || 'unknown'), toolsets: ['terminal', 'file'] })
+    let ans
+    try {
+      ans = await runHermes(prompt, { userEnv, _sender: '_ai_' + (sender || 'unknown'), toolsets: ['terminal', 'file'] })
+    } catch (hermesErr) {
+      console.warn('[HERMES] runHermes failed for .ai, falling back to directChat:', hermesErr.message?.slice(0, 100))
+      ans = await directChat(prompt, { userEnv, _sender: '_ai_' + (sender || 'unknown') })
+    }
     stopTyping(typing, sock, jid)
     await replyLong(sock, msg, sec.redactSecrets(ans.slice(0, MAX_OUTPUT)))
   } catch (e) {
