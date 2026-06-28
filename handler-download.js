@@ -17,7 +17,36 @@ function isTwitterUrl(url) { return /twitter\.com|x\.com/.test(url) }
 function isPinterestUrl(url) { return /pinterest\.com|pin\.it/.test(url) }
 function isInstagramUrl(url) { return /instagram\.com/.test(url) }
 function isFacebookUrl(url) { return /facebook\.com|fb\.watch/.test(url) }
+function isThreadsUrl(url) { return /threads\\.com/.test(url) }
+function isRedditUrl(url) { return /reddit\\.com|redd\\.it/.test(url) }
+function isBilibiliUrl(url) { return /bilibili\\.com|b23\\.tv/.test(url) }
+function isVimeoUrl(url) { return /vimeo\\.com/.test(url) }
+function isDailymotionUrl(url) { return /dailymotion\\.com/.test(url) }
+function isSpotifyUrl(url) { return /open\\.spotify\\.com|spotify:/.test(url) }
+function isSoundCloudUrl(url) { return /soundcloud\\.com/.test(url) }
+function isCapcutUrl(url) { return /capcut\\.com/.test(url) }
+function isLikeeUrl(url) { return /likee\\.video|likee\\.com/.test(url) }
 function cleanUrl(url) { return url.split('?')[0] }
+
+// Detect platform from URL for any-media-to-audio conversion
+function detectPlatform(url) {
+  if (isYouTubeUrl(url)) return 'youtube'
+  if (isTikTokUrl(url)) return 'tiktok'
+  if (isInstagramUrl(url)) return 'instagram'
+  if (isTwitterUrl(url)) return 'twitter'
+  if (isFacebookUrl(url)) return 'facebook'
+  if (isPinterestUrl(url)) return 'pinterest'
+  if (isRedditUrl(url)) return 'reddit'
+  if (isThreadsUrl(url)) return 'threads'
+  if (isBilibiliUrl(url)) return 'bilibili'
+  if (isVimeoUrl(url)) return 'vimeo'
+  if (isDailymotionUrl(url)) return 'dailymotion'
+  if (isSpotifyUrl(url)) return 'spotify'
+  if (isSoundCloudUrl(url)) return 'soundcloud'
+  if (isCapcutUrl(url)) return 'capcut'
+  if (isLikeeUrl(url)) return 'likee'
+  return 'generic'
+}
 
 async function isYtdlpSupported(url) {
   try {
@@ -37,17 +66,78 @@ async function getVideoDuration(url) {
   }
 }
 
-async function downloadWithYtdlp(url, audioOnly = false, platformHint = '') {
+async function downloadWithYtdlp(url, audioOnly = false, platformHint = '', retries = 2) {
   const ext = audioOnly ? 'mp3' : 'mp4'
-  const filePath = path.join(TMP_DIR, `${Date.now()}.${ext}`)
-  const format = audioOnly ? `-x --audio-format mp3` : `-f "best[height<=720]"`
+  const filePath = path.join(TMP_DIR, `${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`)
   // Use realistic browser User-Agent (bypasses some anti-bot blocks)
   const ua = '"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"'
   // Cookies: user can provide IG/FB session cookies via env var
   // (Railway IP blocked from IG/FB; cookies from real browser = trusted IP)
   const cookiesArg = buildYtdlpCookiesArg(platformHint)
-  await execAsync(`yt-dlp --js-runtimes deno ${format} --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`, { timeout: 120000 })
-  return filePath
+
+  if (audioOnly) {
+    // Audio-only: simple strategy, convert to mp3
+    const cmd = `yt-dlp -x --audio-format mp3 --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        await execAsync(cmd, { timeout: 180000 })
+        if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) return filePath
+      } catch (e) {
+        console.error(`[yt-dlp audio] attempt ${attempt + 1} failed: ${e.message?.slice(0, 200)}`)
+        if (attempt === retries) throw e
+        await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
+      }
+    }
+  }
+
+  // Video: try multiple format strategies in order of preference
+  const formatStrategies = [
+    `-f "best[ext=mp4][height<=720]/best[height<=720]/best[ext=mp4]/best"`,
+    `-f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best"`,
+    `-f "best[ext=mp4]/best" --merge-output-format mp4`,
+    `-f "best"`,
+  ]
+
+  let lastError = null
+  for (const format of formatStrategies) {
+    const attemptFilePath = path.join(TMP_DIR, `${Date.now()}_${Math.random().toString(36).slice(2,8)}.mp4`)
+    const cmd = `yt-dlp ${format} --no-playlist --user-agent ${ua} ${cookiesArg} -o "${attemptFilePath}" "${url}"`
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        await execAsync(cmd, { timeout: 180000 })
+        if (fs.existsSync(attemptFilePath) && fs.statSync(attemptFilePath).size > 0) {
+          // If the file was saved with a different extension (e.g. .mkv), find and rename it
+          const dir = path.dirname(attemptFilePath)
+          const baseName = path.basename(attemptFilePath, path.extname(attemptFilePath))
+          const files = fs.readdirSync(dir).filter(f => f.startsWith(baseName))
+          const actualFile = files.length > 0 ? path.join(dir, files[0]) : attemptFilePath
+          if (actualFile !== filePath && fs.existsSync(actualFile)) {
+            fs.renameSync(actualFile, filePath)
+          } else if (actualFile === attemptFilePath) {
+            // File is at expected path
+          }
+          if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) return filePath
+          // Check attemptFilePath directly
+          if (fs.existsSync(attemptFilePath) && fs.statSync(attemptFilePath).size > 0) {
+            fs.copyFileSync(attemptFilePath, filePath)
+            cleanTmp(attemptFilePath)
+            return filePath
+          }
+        }
+      } catch (e) {
+        lastError = e
+        console.error(`[yt-dlp video] format="${format.slice(0,40)}..." attempt ${attempt + 1} failed: ${e.message?.slice(0, 200)}`)
+        if (attempt === retries) break // try next format strategy
+        await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
+      } finally {
+        // Clean up any partial files from this attempt (except our target)
+        try {
+          if (fs.existsSync(attemptFilePath) && attemptFilePath !== filePath) cleanTmp(attemptFilePath)
+        } catch {}
+      }
+    }
+  }
+  throw lastError || new Error('All yt-dlp format strategies failed')
 }
 
 // Build yt-dlp --cookies flag from env vars
@@ -127,14 +217,30 @@ async function downloadViaDiscardapi(url, type) {
       validateStatus: s => s < 500,
     })
     const d = res.data
-    console.log(`[discardapi] ${type} → status: ${d?.status}, code: ${d?.code}`)
-    // Response: { status: true, code: 200, data: { url, ... } } OR { status: false, code, message }
+    console.log('[discardapi] ' + type + ' → response keys: ' + Object.keys(d || {}).join(','))
+    
+    // New format: { result: [{ title: "Download Video", url: "..." }, ...] }
+    if (d?.result && Array.isArray(d.result)) {
+      // Find video first, then thumbnail, then first item
+      const videoItem = d.result.find(r => /video/i.test(r.title)) || d.result.find(r => /download/i.test(r.title)) || d.result[0]
+      if (videoItem?.url) {
+        return { url: videoItem.url, source: 'discardapi' }
+      }
+    }
+    
+    // Old format: { status: true, data: { url: "..." } }
     if (d?.status && d?.data?.url) {
       return { url: d.data.url, source: 'discardapi' }
     }
-    if (d?.status && d?.data?.data?.url) {  // some endpoints nest deeper
+    if (d?.status && d?.data?.data?.url) {
       return { url: d.data.data.url, source: 'discardapi' }
     }
+    
+    // Direct url field
+    if (d?.url) {
+      return { url: d.url, source: 'discardapi' }
+    }
+    
     return null
   } catch (err) {
     console.error(`[discardapi] ${type} failed:`, err.message)
@@ -181,23 +287,23 @@ async function downloadViaGtechFB(url) {
 async function downloadWithFallback(url, platformLabel = '') {
   const platform = platformLabel.toLowerCase()
 
-  // For IG: prefer discardapi (fast, returns direct URL)
+  // For IG: prefer robust multi-strategy download
   if (platform === 'instagram' || platform === 'ig') {
-    const apiResult = await downloadViaDiscardapi(url, 'instagram')
-    if (apiResult) return { ...apiResult, type: 'direct' }
-    // fallback to yt-dlp
     try {
-      return { filePath: await downloadWithYtdlp(url, false, platform), source: 'yt-dlp', type: 'file' }
+      return await downloadInstagramRobust(url)
     } catch (e) {
-      console.error(`[download] yt-dlp failed for IG: ${e.message?.slice(0, 200)}`)
+      console.error(`[download] all IG strategies failed: ${e.message?.slice(0, 200)}`)
     }
   }
 
-  // For FB: prefer gtech fb (fast, returns direct URL)
+  // For FB: prefer gtech fb (fast, returns direct URL) with retry
   if (platform === 'facebook' || platform === 'fb') {
-    const apiResult = await downloadViaGtechFB(url)
-    if (apiResult) return { ...apiResult, type: 'direct' }
-    // fallback to yt-dlp
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const apiResult = await downloadViaGtechFB(url)
+      if (apiResult) return { ...apiResult, type: 'direct' }
+      if (attempt < 1) await new Promise(r => setTimeout(r, 2000))
+    }
+    // fallback to yt-dlp with retry
     try {
       return { filePath: await downloadWithYtdlp(url, false, platform), source: 'yt-dlp', type: 'file' }
     } catch (e) {
@@ -205,7 +311,7 @@ async function downloadWithFallback(url, platformLabel = '') {
     }
   }
 
-  // Default: yt-dlp (YT, Twitter, Pinterest, generic)
+  // Default: yt-dlp (YT, Twitter, Pinterest, generic) with retry
   try {
     return { filePath: await downloadWithYtdlp(url, false, platform), source: 'yt-dlp', type: 'file' }
   } catch (ytdlpErr) {
@@ -214,20 +320,45 @@ async function downloadWithFallback(url, platformLabel = '') {
   }
 }
 
-async function downloadTikTok(url) {
-  const res = await axios.get(`https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`, { timeout: TIMEOUT })
-  if (!res.data || res.data.code !== 0) throw new Error('Gagal mengambil video TikTok.')
-  const videoUrl = res.data.data?.hdplay || res.data.data?.play
-  if (!videoUrl) throw new Error('Link video tidak ditemukan.')
-  const title = res.data.data?.title?.slice(0, 50) || 'tiktok'
-  const filePath = path.join(TMP_DIR, Date.now() + '.mp4')
-  const videoRes = await axios.get(videoUrl, { responseType: 'stream', timeout: TIMEOUT })
-  return new Promise((resolve, reject) => {
-    const writer = fs.createWriteStream(filePath)
-    videoRes.data.pipe(writer)
-    writer.on('finish', () => resolve({ filePath, title }))
-    writer.on('error', reject)
+async function downloadTikTok(url, retries = 2) {
+  const strategies = []
+
+  // Strategy 1: tikwm.com API
+  strategies.push(async () => {
+    const res = await axios.get(`https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`, { timeout: TIMEOUT })
+    if (!res.data || res.data.code !== 0) throw new Error('tikwm API error')
+    const videoUrl = res.data.data?.hdplay || res.data.data?.play
+    if (!videoUrl) throw new Error('No video URL in tikwm response')
+    const title = res.data.data?.title?.slice(0, 50) || 'tiktok'
+    const filePath = path.join(TMP_DIR, `tt_${Date.now()}.mp4`)
+    const videoRes = await axios.get(videoUrl, { responseType: 'stream', timeout: TIMEOUT })
+    return new Promise((resolve, reject) => {
+      const writer = fs.createWriteStream(filePath)
+      videoRes.data.pipe(writer)
+      writer.on('finish', () => resolve({ filePath, title }))
+      writer.on('error', reject)
+    })
   })
+
+  // Strategy 2: yt-dlp fallback
+  strategies.push(async () => {
+    const filePath = await downloadWithYtdlp(url, false, 'tiktok')
+    return { filePath, title: 'tiktok' }
+  })
+
+  let lastError = null
+  for (const strategy of strategies) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await strategy()
+      } catch (err) {
+        lastError = err
+        console.error(`[ttdl] attempt ${attempt + 1} failed: ${err.message?.slice(0, 200)}`)
+        if (attempt < retries) await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
+      }
+    }
+  }
+  throw lastError || new Error('Gagal mengambil video TikTok.')
 }
 
 function cobaltFallback(url) {
@@ -379,6 +510,198 @@ async function downloadViaTwitterAPI(url) {
   } catch (e) {
     console.error(`[twitter-api] yt-dlp fallback failed:`, e.message?.slice(0, 200))
     return null
+  }
+}
+
+// ─── ROBUST INSTAGRAM DOWNLOAD ───────────────────────────────────────────────
+// Tries multiple strategies in order:
+//   1. discardapi (fast, returns direct URL)
+//   2. yt-dlp with cookies (if available)
+//   3. yt-dlp with different flags (--extractor-args, --no-check-certificates)
+//   4. igram.world API fallback
+// Supports: reels, posts (single/multi), stories, IGTV
+async function downloadInstagramRobust(url) {
+  // NO COOKIES NEEDED — all strategies use free public APIs.
+  // Cookies are optional bonus (env vars IG_SESSION_ID etc).
+  const strategies = []
+
+  // Strategy 1: snapinsta.app API (free, no auth, fast)
+  strategies.push(async () => {
+    try {
+      const apiUrl = `https://api.snapinsta.app/api/download`
+      const res = await axios.post(apiUrl, { url }, {
+        timeout: 60000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Content-Type': 'application/json' },
+        validateStatus: s => s < 500,
+      })
+      const data = res.data
+      if (data?.data?.length > 0) {
+        const media = data.data[0]
+        const videoUrl = media.url || media.video_url
+        if (videoUrl) return { url: videoUrl, source: 'snapinsta', type: 'direct', strategy: 'snapinsta' }
+      }
+    } catch (e) {
+      console.error('[snapinsta] failed:', e.message?.slice(0, 100))
+    }
+    return null
+  })
+
+  // Strategy 2: discardapi (free, no auth)
+  strategies.push(async () => {
+    const result = await downloadViaDiscardapi(url, 'instagram')
+    if (result) return { ...result, type: 'direct', strategy: 'discardapi' }
+    return null
+  })
+
+  // Strategy 3: saveig.app API (free, no auth)
+  strategies.push(async () => {
+    try {
+      const apiUrl = `https://saveig.app/api/download`
+      const res = await axios.post(apiUrl, { url }, {
+        timeout: 60000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Content-Type': 'application/json' },
+        validateStatus: s => s < 500,
+      })
+      const data = res.data
+      const videoUrl = data?.data?.url || data?.data?.video_url
+      if (videoUrl) return { url: videoUrl, source: 'saveig', type: 'direct', strategy: 'saveig' }
+    } catch (e) {
+      console.error('[saveig] failed:', e.message?.slice(0, 100))
+    }
+    return null
+  })
+
+  // Strategy 4: igram.world API (free, no auth)
+  strategies.push(async () => {
+    try {
+      const apiUrl = `https://igram.world/api/ig/postInfo?url=${encodeURIComponent(url)}`
+      const res = await axios.get(apiUrl, {
+        timeout: 60000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        validateStatus: s => s < 500,
+      })
+      const data = res.data
+      if (data?.success && data?.data?.media?.length > 0) {
+        const media = data.data.media[0]
+        const videoUrl = media.video_url || media.url
+        if (videoUrl) return { url: videoUrl, source: 'igram.world', type: 'direct', strategy: 'igram' }
+      }
+    } catch (e) {
+      console.error('[igram] failed:', e.message?.slice(0, 100))
+    }
+    return null
+  })
+
+  // Strategy 5: yt-dlp (works if Railway IP not blocked, no cookies needed)
+  strategies.push(async () => {
+    const filePath = await downloadWithYtdlp(url, false, 'instagram')
+    return { filePath, source: 'yt-dlp', type: 'file', strategy: 'yt-dlp' }
+  })
+
+  // Strategy 6: yt-dlp with cookies (ONLY if user provided them — optional)
+  strategies.push(async () => {
+    const ua = '"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"'
+    const cookiesArg = buildYtdlpCookiesArg('instagram')
+    if (!cookiesArg) return null  // skip if no cookies configured
+    const filePath = path.join(TMP_DIR, `ig_${Date.now()}.mp4`)
+    const cmd = `yt-dlp -f "best[ext=mp4]/best" --extractor-args "instagram:api_version=v1" --no-check-certificates --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
+    await execAsync(cmd, { timeout: 180000 })
+    if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) throw new Error('Empty file')
+    return { filePath, source: 'yt-dlp+cookies', type: 'file', strategy: 'yt-dlp-cookies' }
+  })
+
+  // Execute strategies in sequence, return first success
+  let lastError = null
+  for (const strategy of strategies) {
+    try {
+      const result = await strategy()
+      if (result) {
+        console.log('[igdl] ✅ success via: ' + result.strategy)
+        return result
+      }
+    } catch (err) {
+      lastError = err
+      console.error('[igdl] strategy failed: ' + err.message?.slice(0, 200))
+    }
+  }
+  throw lastError || new Error('Gagal download Instagram. Coba lagi dalam beberapa menit.')
+}
+
+// ─── UNIVERSAL VIDEO-TO-AUDIO (TOAUDIO / TOMP3) ─────────────────────────────
+// Converts ANY video URL to MP3 audio. Works for YouTube, TikTok, IG, Twitter, etc.
+// Uses yt-dlp -x --audio-format mp3 with platform-aware cookies.
+async function convertUrlToAudio(url) {
+  const platform = detectPlatform(url)
+  console.log(`[toaudio] detected platform: ${platform} for ${url.slice(0, 80)}`)
+
+  // For Spotify/SoundCloud, these are already audio — try yt-dlp directly
+  // For everything else, use yt-dlp -x to extract audio
+
+  const ua = '"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"'
+  const cookiesArg = buildYtdlpCookiesArg(platform)
+  const filePath = path.join(TMP_DIR, `toaudio_${Date.now()}_${Math.random().toString(36).slice(2,6)}.mp3`)
+
+  // Strategy 1: yt-dlp -x --audio-format mp3 (universal, most reliable)
+  const ytdlpCmd = `yt-dlp -x --audio-format mp3 --audio-quality 0 --no-playlist --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await execAsync(ytdlpCmd, { timeout: 180000 })
+      if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
+        return { filePath, platform, method: 'yt-dlp', title: await getTitleForUrl(url) }
+      }
+      // yt-dlp might save as .mp3.webm or similar — find the actual file
+      const dir = path.dirname(filePath)
+      const baseName = path.basename(filePath, '.mp3')
+      const found = fs.readdirSync(dir).find(f => f.startsWith(baseName))
+      if (found) {
+        const actual = path.join(dir, found)
+        if (fs.statSync(actual).size > 0) {
+          if (actual !== filePath) fs.renameSync(actual, filePath)
+          return { filePath, platform, method: 'yt-dlp', title: await getTitleForUrl(url) }
+        }
+      }
+    } catch (e) {
+      console.error(`[toaudio] yt-dlp attempt ${attempt + 1} failed: ${e.message?.slice(0, 200)}`)
+      if (attempt === 2) break
+      await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
+    }
+  }
+
+  // Strategy 2: yt-dlp with --extract-audio flag (alternative approach)
+  const altCmd = `yt-dlp --extract-audio --audio-format mp3 --audio-quality 0 --no-playlist --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
+  try {
+    await execAsync(altCmd, { timeout: 180000 })
+    // Check for .mp3 file (yt-dlp might create .mp3 from original name)
+    const dir = path.dirname(filePath)
+    const files = fs.readdirSync(dir).filter(f => f.includes('toaudio_') && f.endsWith('.mp3'))
+    for (const f of files) {
+      const p = path.join(dir, f)
+      if (fs.existsSync(p) && fs.statSync(p).size > 0 && p !== filePath) {
+        fs.renameSync(p, filePath)
+      }
+    }
+    if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
+      return { filePath, platform, method: 'yt-dlp-alt', title: await getTitleForUrl(url) }
+    }
+  } catch (e) {
+    console.error(`[toaudio] yt-dlp alt strategy failed: ${e.message?.slice(0, 200)}`)
+  }
+
+  // If we get here, all strategies failed
+  throw new Error('Gagal mengkonversi ke audio. Pastikan link valid dan coba lagi.')
+}
+
+// Helper: get video title for caption
+async function getTitleForUrl(url) {
+  try {
+    const { stdout } = await execAsync(
+      `yt-dlp --print title --print uploader --no-playlist "${cleanUrl(url)}"`,
+      { timeout: 20000 }
+    )
+    const [title, uploader] = stdout.trim().split('\n').map(s => s.trim())
+    return { title: title || '', uploader: uploader || '' }
+  } catch {
+    return { title: '', uploader: '' }
   }
 }
 
@@ -537,9 +860,19 @@ export async function handleDownload(sock, msg, text, command) {
     await sendText('⏳ Sedang mengunduh dari Pinterest...')
     let filePath = null
     try {
-      filePath = await downloadWithYtdlp(url)
-      await sock.sendMessage(from, { video: fs.readFileSync(filePath), caption: '📌 Downloaded by WA Bot', mimetype: 'video/mp4' }, { quoted: msg })
+      // Try with retry via downloadWithYtdlp (has built-in retry now)
+      filePath = await downloadWithYtdlp(url, false, 'pinterest')
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
+        throw new Error('Downloaded file is empty')
+      }
+      const sizeMB = (fs.statSync(filePath).size / 1024 / 1024).toFixed(1)
+      await sock.sendMessage(from, {
+        video: fs.readFileSync(filePath),
+        caption: `📌 *Pinterest* — ${sizeMB} MB\n\n_Downloaded by WA Bot_`,
+        mimetype: 'video/mp4'
+      }, { quoted: msg })
     } catch (err) {
+      console.error(`[pindl] failed: ${err.message?.slice(0, 200)}`)
       await sendText(cobaltFallback(url))
     } finally {
       if (filePath) cleanTmp(filePath)
@@ -551,8 +884,8 @@ export async function handleDownload(sock, msg, text, command) {
     if (!url || !isInstagramUrl(url)) return sendText('❌ Format salah! Contoh: .igdl https://www.instagram.com/reel/xxxxx')
     await sendText('⏳ Sedang mengunduh dari Instagram...')
     try {
-      const result = await downloadWithFallback(url, 'instagram')
-      console.log(`[igdl] downloaded via ${result.source} (${result.type})`)
+      const result = await downloadInstagramRobust(url)
+      console.log(`[igdl] downloaded via ${result.strategy || result.source} (${result.type})`)
 
       // Build caption with metadata if available
       let finalCaption = `📸 *Instagram*${result.source ? ` — ${result.source}` : ''}\n\n_Downloaded by WA Bot_`
@@ -577,6 +910,9 @@ export async function handleDownload(sock, msg, text, command) {
       } else {
         // File path (from yt-dlp fallback) — check size + send
         const fpath = result.filePath
+        if (!fs.existsSync(fpath) || fs.statSync(fpath).size === 0) {
+          throw new Error('Downloaded file is empty or missing')
+        }
         const sizeMB = fs.statSync(fpath).size / 1024 / 1024
         if (sizeMB > 64) {
           cleanTmp(fpath)
@@ -667,6 +1003,59 @@ if (!supported) return sendText(cobaltFallback(url))
       await sock.sendMessage(from, { video: fs.readFileSync(filePath), caption: '📥 Downloaded by WA Bot', mimetype: 'video/mp4' }, { quoted: msg })
     } catch (err) {
       await sendText(cobaltFallback(url))
+    } finally {
+      if (filePath) cleanTmp(filePath)
+    }
+    return
+  }
+
+  // ─── UNIVERSAL VIDEO-TO-AUDIO: .toaudio / .tomp3 ───────────────────────────
+  // Converts ANY video URL to MP3 audio. Works for YouTube, TikTok, IG, Twitter, etc.
+  // Usage: .toaudio <url> or .tomp3 <url>
+  if (command === 'toaudio' || command === 'tomp3') {
+    if (!url || !url.startsWith('http')) return sendText(
+      `❌ Format salah!\n\n` +
+      `*.${command} <link video>*\n\n` +
+      `✅ Didukung: YouTube, TikTok, Instagram, Twitter/X, Facebook, Reddit, Vimeo, Bilibili, dll.\n\n` +
+      `Contoh:\n.${command} https://youtu.be/xxxxx\n.${command} https://www.tiktok.com/...`
+    )
+    const platform = detectPlatform(url)
+    await sendText(`⏳ Mengkonversi ke audio MP3...\n📱 Platform: *${platform}*`)
+    let filePath = null
+    try {
+      const result = await convertUrlToAudio(url)
+      filePath = result.filePath
+
+      // Check file exists and has content
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) {
+        throw new Error('File audio kosong atau tidak ditemukan')
+      }
+
+      const sizeMB = (fs.statSync(filePath).size / 1024 / 1024).toFixed(1)
+      const { title, uploader } = result.title || {}
+      let caption = `🎵 *Audio MP3*\n`
+      if (title) caption += `📝 ${title}\n`
+      if (uploader) caption += `👤 ${uploader}\n`
+      caption += `📱 ${result.platform} | ${result.method}\n📦 ${sizeMB} MB\n\n_Downloaded by WA Bot_`
+
+      await sock.sendMessage(from, {
+        audio: fs.readFileSync(filePath),
+        mimetype: 'audio/mpeg',
+        ptt: false,
+        fileName: title ? `${title.slice(0, 60)}.mp3` : 'audio.mp3',
+      }, { quoted: msg })
+      // Send caption separately since audio messages don't support caption
+      await sendText(caption)
+    } catch (err) {
+      console.error(`[toaudio] failed for ${url}: ${err.message}`)
+      await sendText(
+        `❌ Gagal konversi ke audio!\n\n` +
+        `Error: ${err.message?.slice(0, 200)}\n\n` +
+        `💡 Tips:\n` +
+        `• Pastikan link valid dan video tidak private\n` +
+        `• Coba lagi dalam beberapa menit\n` +
+        `• Gunakan link alternatif (misal: youtu.be → youtube.com)`
+      )
     } finally {
       if (filePath) cleanTmp(filePath)
     }

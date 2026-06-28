@@ -17,7 +17,7 @@ import { handleSosmed } from './handler-sosmed.js'
 import { handleDownload } from './handler-download.js'
 import { getMenuText, getStartRedirectText } from './menu.js'
 import restrictions from './restrictions.cjs'
-const { isCommandAllowed, isRestrictedGroup, getAllowedCommands } = restrictions
+const { isCommandAllowed, isRestrictedGroup, getAllowedCommands, restrictGroup, unrestrictGroup, addCommand, addCommandAll, removeCommand, removeCommandAll, listRestrictedGroups, getGlobalEnabledCommands, enableCommand, disableCommand } = restrictions
 const memoryModule = (() => { try { return require('./memory.cjs') } catch (_) { return null } })()
 const bridge = (() => { try { return require('./handler-hermes-bridge.cjs') } catch (_) { return null } })()
 const sec = (() => { try { return require('./security.cjs') } catch (_) { return null } })()
@@ -42,7 +42,7 @@ import {
   handleGame,
 } from './handler-game.js'
 import { handleCekML, handleMLAcc, handleMLZone, handleMLMenu } from './handler-ml-cek.js'
-import { execute as imagineExec, handleImagine, handleAutoImagine } from "./handler-imagine.js"
+// import { execute as imagineExec, handleImagine, handleAutoImagine } from "./handler-imagine.js"  // REMOVED: image generation disabled
 import { handleWeather } from './handler-weather.js'
 import { handleUpdate, handleRestart } from './handler-update.js'
 import { handleMessage } from "./handler.js"
@@ -307,10 +307,6 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
       return
     }
     // ================== END SETMENU ==================
-
-    // ================== AUTO IMAGE DETECT ==================
-    const autoImg = await handleAutoImagine(sock, msg, body)
-    if (autoImg) return
 
     // ================== AUTO-DOWNLOAD (NO PREFIX) ==================
     // Detect URL di pesan TANPA prefix command.
@@ -871,12 +867,113 @@ case 'download':
           }
           break
         }
-        case 'imagine':
-        case 'img':
-        case 'generate':
-        case 'gen':
-          await handleImagine(sock, msg, body)
+        case 'convert': {
+          if (!text) {
+            await sendText(
+              `💱 *CURRENCY CONVERTER*\n\n` +
+              `Cara: .convert [jumlah] [dari] to [ke]\n\n` +
+              `Contoh:\n` +
+              `• .convert 100 usd to idr\n` +
+              `• .convert 1 btc to usd\n` +
+              `• .convert 1 eth to btc\n` +
+              `• .convert 500000 idr to usd\n\n` +
+              `Supported crypto: btc, eth, sol, bnb, xrp, doge, ada, dot, etc.\n` +
+              `Supported fiat: usd, idr, eur, jpy, gbp, cny, krw, sgd, myr, dll.`
+            )
+            break
+          }
+
+          const cvParts = text.trim().split(/\s+/)
+          const cvAmount = parseFloat(cvParts[0])
+          const cvFrom = cvParts[1]?.toLowerCase()
+          const cvTo = cvParts[3]?.toLowerCase()
+
+          if (isNaN(cvAmount) || !cvFrom || !cvTo || cvParts[2]?.toLowerCase() !== 'to') {
+            await sendText('❌ Format salah! Contoh: .convert 100 usd to idr')
+            break
+          }
+
+          const cryptoMap = {
+            btc: 'bitcoin', eth: 'ethereum', sol: 'solana', bnb: 'binancecoin',
+            xrp: 'ripple', doge: 'dogecoin', ada: 'cardano', dot: 'polkadot',
+            avax: 'avalanche-2', matic: 'matic-network', polygon: 'matic-network',
+            link: 'chainlink', uni: 'uniswap', atom: 'cosmos',
+            xlm: 'stellar', algo: 'algorand', near: 'near', ftm: 'fantom',
+            trx: 'tron', shib: 'shiba-inu', ltc: 'litecoin',
+            bch: 'bitcoin-cash', etc: 'ethereum-classic',
+          }
+
+          const fiatList = ['usd','idr','eur','jpy','gbp','cny','krw','sgd','myr','thb','vnd','php','inr','aud','cad','chf','hkd','twd','brl','mxn','zar','rub','try','ngn','pkr','egp']
+
+          const isFromCrypto = !!cryptoMap[cvFrom]
+          const isToCrypto = !!cryptoMap[cvTo]
+          const isFromFiat = fiatList.includes(cvFrom)
+          const isToFiat = fiatList.includes(cvTo)
+
+          await sendText('💱 Menghitung...')
+
+          try {
+            if (isFromCrypto && isToCrypto) {
+              const fromId = cryptoMap[cvFrom]
+              const toId = cryptoMap[cvTo]
+              const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${fromId},${toId}&vs_currencies=usd`)
+              const data = await res.json()
+              const fromPrice = data[fromId]?.usd
+              const toPrice = data[toId]?.usd
+              if (!fromPrice || !toPrice) throw new Error('Data harga tidak ditemukan')
+              const cvRate = fromPrice / toPrice
+              const cvResult = cvAmount * cvRate
+              await sendText(
+                `💱 *CONVERT*\n\n` +
+                `${cvAmount} ${cvFrom.toUpperCase()} = ${cvResult.toFixed(8)} ${cvTo.toUpperCase()}\n\n` +
+                `📊 1 ${cvFrom.toUpperCase()} = ${cvRate.toFixed(8)} ${cvTo.toUpperCase()}\n` +
+                `💰 ${cvFrom.toUpperCase()}: $${fromPrice.toLocaleString()}\n` +
+                `💰 ${cvTo.toUpperCase()}: $${toPrice.toLocaleString()}`
+              )
+            } else if (isFromCrypto && isToFiat) {
+              const fromId = cryptoMap[cvFrom]
+              const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${fromId}&vs_currencies=${cvTo}`)
+              const data = await res.json()
+              const price = data[fromId]?.[cvTo]
+              if (!price) throw new Error('Data harga tidak ditemukan')
+              const cvResult = cvAmount * price
+              await sendText(
+                `💱 *CONVERT*\n\n` +
+                `${cvAmount} ${cvFrom.toUpperCase()} = ${cvTo.toUpperCase()} ${cvResult.toLocaleString('id-ID', { maximumFractionDigits: 2 })}\n\n` +
+                `📊 1 ${cvFrom.toUpperCase()} = ${cvTo.toUpperCase()} ${price.toLocaleString('id-ID', { maximumFractionDigits: 2 })}`
+              )
+            } else if (isFromFiat && isToCrypto) {
+              const toId = cryptoMap[cvTo]
+              const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${toId}&vs_currencies=${cvFrom}`)
+              const data = await res.json()
+              const price = data[toId]?.[cvFrom]
+              if (!price) throw new Error('Data harga tidak ditemukan')
+              const cvResult = cvAmount / price
+              await sendText(
+                `💱 *CONVERT*\n\n` +
+                `${cvFrom.toUpperCase()} ${cvAmount.toLocaleString('id-ID')} = ${cvResult.toFixed(8)} ${cvTo.toUpperCase()}\n\n` +
+                `📊 1 ${cvTo.toUpperCase()} = ${cvFrom.toUpperCase()} ${price.toLocaleString('id-ID', { maximumFractionDigits: 2 })}`
+              )
+            } else if (isFromFiat && isToFiat) {
+              const res = await fetch(`https://api.frankfurter.app/latest?amount=${cvAmount}&from=${cvFrom.toUpperCase()}&to=${cvTo.toUpperCase()}`)
+              const data = await res.json()
+              const cvResult = data.rates?.[cvTo.toUpperCase()]
+              if (!cvResult) throw new Error('Data kurs tidak ditemukan')
+              const cvRate = cvResult / cvAmount
+              await sendText(
+                `💱 *CONVERT*\n\n` +
+                `${cvFrom.toUpperCase()} ${cvAmount.toLocaleString('id-ID')} = ${cvTo.toUpperCase()} ${cvResult.toLocaleString('id-ID', { maximumFractionDigits: 2 })}\n\n` +
+                `📊 1 ${cvFrom.toUpperCase()} = ${cvRate.toFixed(4)} ${cvTo.toUpperCase()}\n` +
+                `📅 Rate: ${data.date}`
+              )
+            } else {
+              await sendText('❌ Mata uang tidak dikenali! Ketik .convert tanpa argumen untuk lihat daftar.')
+            }
+          } catch (cvErr) {
+            await sendText(`❌ Gagal convert: ${cvErr.message}\n\nPastikan kode mata uang benar (contoh: usd, idr, btc, eth)`)
+          }
           break
+        }
         case 'cuaca':
         case 'weather':
           await handleWeather(sock, msg, text, WEATHER_API_KEY)
@@ -966,6 +1063,202 @@ case 'download':
             await sendText(out)
           } else {
             await sendText('❌ Memory module ga tersedia')
+          }
+          break
+        }
+
+        // ==================== GROUP RESTRICTION MANAGEMENT (owner only) ====================
+        case 'restrictgroup': {
+          const senderNum2 = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(senderNum2)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            return
+          }
+          if (!isGroup) {
+            await sendText('❌ Command ini cuma bisa dipake di dalam grup.')
+            return
+          }
+          if (isRestrictedGroup(from)) {
+            await sendText('⚠️ Grup ini sudah terfilter. Gunakan `.listcmd` untuk lihat command yang diizinkan.')
+            return
+          }
+          restrictGroup(from)
+          await sendText(
+            '✅ *Grup ini sekarang terfilter!*)\n\n' +
+            'Hanya command yang diizinkan yang bisa dipake.\n' +
+            '• `.addcmd <cmd>` — tambah command\n' +
+            '• `.removecmd <cmd>` — hapus command\n' +
+            '• `.listcmd` — liat daftar command\n' +
+            '• `.unrestrictgroup` — hapus filter'
+          )
+          break
+        }
+
+        case 'unrestrictgroup': {
+          const senderNum3 = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(senderNum3)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            return
+          }
+          if (!isGroup) {
+            await sendText('❌ Command ini cuma bisa dipake di dalam grup.')
+            return
+          }
+          if (!isRestrictedGroup(from)) {
+            await sendText('⚠️ Grup ini tidak terfilter.')
+            return
+          }
+          unrestrictGroup(from)
+          await sendText('✅ *Filter grup ini dihapus!* Semua command sekarang tersedia.')
+          break
+        }
+
+        case 'addcmd': {
+          const senderNum4 = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(senderNum4)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            return
+          }
+          if (!isGroup) {
+            await sendText('❌ Command ini cuma bisa dipake di dalam grup.')
+            return
+          }
+          if (!text) {
+            await sendText('⚠️ Contoh: `.addcmd download`\n\nGunakan `.listcmd` untuk lihat command yang sudah diizinkan.')
+            return
+          }
+          const result = addCommand(from, text.trim())
+          if (result.ok) {
+            await sendText(`✅ Command *.${result.cmd}* ditambahkan ke grup ini!\n\nGunakan \`.listcmd\` untuk lihat daftar lengkap.`)
+          } else {
+            await sendText(`❌ ${result.reason}`)
+          }
+          break
+        }
+
+        case 'removecmd': {
+          const senderNum5 = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(senderNum5)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            return
+          }
+          if (!isGroup) {
+            await sendText('❌ Command ini cuma bisa dipake di dalam grup.')
+            return
+          }
+          if (!text) {
+            await sendText('⚠️ Contoh: `.removecmd download`')
+            return
+          }
+          const result2 = removeCommand(from, text.trim())
+          if (result2.ok) {
+            await sendText(`✅ Command *.${result2.cmd}* dihapus dari grup ini!`)
+          } else {
+            await sendText(`❌ ${result2.reason}`)
+          }
+          break
+        }
+
+        case 'listcmd': {
+          if (!isGroup) {
+            await sendText('❌ Command ini cuma bisa dipake di dalam grup.')
+            return
+          }
+          if (!isRestrictedGroup(from)) {
+            await sendText('ℹ️ Grup ini *tidak terfilter*. Semua command tersedia.')
+            return
+          }
+          const allowed = getAllowedCommands(from) || []
+          const cmdList = allowed.map(c => `• \`.${c}\``).join('\n')
+          await sendText(
+            `📋 *Command yang diizinkan di grup ini:*\n\n${cmdList}\n\n` +
+            `Total: *${allowed.length}* command\n\n` +
+            (OWNER_LIDS.includes((sender || '').split('@')[0].split(':')[0])
+              ? 'Owner: `.addcmd <cmd>` / `.removecmd <cmd>` untuk manage'
+              : 'Hubungi owner untuk menambah/menghapus command')
+          )
+          break
+        }
+
+        case 'addcmdall': {
+          const senderNum6 = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(senderNum6)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            return
+          }
+          if (!text) {
+            await sendText('⚠️ Contoh: `.addcmdall sticker`\n\nTambah command ke SEMUA grup terfilter sekaligus.')
+            return
+          }
+          const result3 = addCommandAll(text.trim())
+          if (result3.ok) {
+            await sendText(`✅ Command *.${result3.cmd}* ditambahkan ke *${result3.count}* grup terfilter!`)
+          } else {
+            await sendText(`❌ ${result3.reason}`)
+          }
+          break
+        }
+
+        case 'removecmdall': {
+          const senderNum7 = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(senderNum7)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            return
+          }
+          if (!text) {
+            await sendText('⚠️ Contoh: `.removecmdall sticker`\n\nHapus command dari SEMUA grup terfilter sekaligus.')
+            return
+          }
+          const result4 = removeCommandAll(text.trim())
+          if (result4.ok) {
+            await sendText(`✅ Command *.${result4.cmd}* dihapus dari *${result4.count}* grup terfilter!`)
+          } else {
+            await sendText(`❌ ${result4.reason}`)
+          }
+          break
+        }
+
+        // ==================== GLOBAL CMD MANAGEMENT (owner only) ====================
+        case 'enablecmd': {
+          const senderNum8 = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(senderNum8)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            return
+          }
+          if (!text) {
+            const enabled = getGlobalEnabledCommands()
+            await sendText(
+              '📢 *Command Aktif untuk Semua User*\n\n' +
+              enabled.map(c => `• \`.${c}\``).join('\n') + '\n\n' +
+              'Tambah: `.enablecmd <nama>`\n' +
+              'Hapus: `.disablecmd <nama>`'
+            )
+            return
+          }
+          const res5 = enableCommand(text.trim())
+          if (res5.ok) {
+            await sendText(`✅ Command *.${res5.cmd}* sekarang aktif untuk SEMUA user di private chat!`)
+          } else {
+            await sendText(`❌ ${res5.reason}`)
+          }
+          break
+        }
+
+        case 'disablecmd': {
+          const senderNum9 = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(senderNum9)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            return
+          }
+          if (!text) {
+            await sendText('⚠️ Contoh: `.disablecmd sticker`')
+            return
+          }
+          const res6 = disableCommand(text.trim())
+          if (res6.ok) {
+            await sendText(`✅ Command *.${res6.cmd}* dihapus dari menu global.`)
+          } else {
+            await sendText(`❌ ${res6.reason}`)
           }
           break
         }

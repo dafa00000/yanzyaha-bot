@@ -277,6 +277,79 @@ async function handle(sock, msg, body, sender) {
     )
   }
 
+  // ═══ GLOBAL CONFIG SETTERS (owner only, instant effect) ═══
+  if (cmd === 'setglobalkey' || cmd === 'setglobalapikey') {
+    if (!isOwner(sender)) return replyWa(sock, jid, '❌ Owner only.', msg)
+    if (!value) {
+      return replyWa(sock, jid,
+        '⚠️ Contoh: `.setglobalkey sk-abc123...`\n\n' +
+        'Set API key *global* (default buat semua user).\n' +
+        'Efek langsung, GA PERLU redeploy Railway!\n\n' +
+        'Per-user override tetap jalan (`.setapikey`).',
+        msg
+      )
+    }
+    saveConfig({ OPENAI_API_KEY: value })
+    return replyWa(sock, jid,
+      `✅ *Global API Key* di-update!\n\n` +
+      `🔑 Key: \`${maskKey(value)}\`\n` +
+      `⚡ Efek: LANGSUNG (ga perlu restart)\n` +
+      `📌 Semua user default pake key ini\n` +
+      `💡 User bisa override dengan \`.setapikey\``,
+      msg
+    )
+  }
+
+  if (cmd === 'setglobalurl' || cmd === 'setglobalbaseurl') {
+    if (!isOwner(sender)) return replyWa(sock, jid, '❌ Owner only.', msg)
+    if (!value || !value.match(/^https?:\/\//)) {
+      return replyWa(sock, jid,
+        '⚠️ Contoh: `.setglobalurl https://api.openrouter.ai/api/v1`\n\n' +
+        'Set base URL *global* (default buat semua user).\n' +
+        'Efek langsung, GA PERLU redeploy Railway!',
+        msg
+      )
+    }
+    saveConfig({ OPENAI_BASE_URL: value })
+    // Clear models cache since base URL changed
+    modelsCache.clear()
+    return replyWa(sock, jid,
+      `✅ *Global Base URL* di-update!\n\n` +
+      `🌐 URL: \`${value}\`\n` +
+      `⚡ Efek: LANGSUNG (ga perlu restart)\n` +
+      `📌 Semua user default pake URL ini\n` +
+      `💡 User bisa override dengan \`.setbaseurl\``,
+      msg
+    )
+  }
+
+  if (cmd === 'setglobalmodel' || cmd === 'setglobalhermesmodel') {
+    if (!isOwner(sender)) return replyWa(sock, jid, '❌ Owner only.', msg)
+    if (!value) {
+      return replyWa(sock, jid,
+        '⚠️ Contoh: `.setglobalmodel anthropic/claude-sonnet-4`\n\n' +
+        'Set model AI *global* (default buat semua user).\n' +
+        'Efek langsung, GA PERLU redeploy Railway!\n\n' +
+        'Cek `.models` buat liat daftar model.',
+        msg
+      )
+    }
+    saveConfig({ HERMES_MODEL: value })
+    return replyWa(sock, jid,
+      `✅ *Global Model* di-update!\n\n` +
+      `🤖 Model: \`${value}\`\n` +
+      `⚡ Efek: LANGSUNG (ga perlu restart)\n` +
+      `📌 Semua user default pake model ini\n` +
+      `💡 User bisa override dengan \`.setmodel\``,
+      msg
+    )
+  }
+
+  if (cmd === 'showglobalconfig' || cmd === 'globalconfig' || cmd === 'globalcfg') {
+    if (!isOwner(sender)) return replyWa(sock, jid, '❌ Owner only.', msg)
+    return showGlobalConfig(sock, jid, msg)
+  }
+
   // ═══ PER-USER (semua user) ═══
   switch (cmd) {
     case 'setapikey':

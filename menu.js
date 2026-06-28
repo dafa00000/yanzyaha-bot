@@ -11,7 +11,7 @@
  */
 
 import restrictions from './restrictions.cjs'
-const { isRestrictedGroup, getAllowedCommands } = restrictions
+const { isRestrictedGroup, getAllowedCommands, getGlobalEnabledCommands } = restrictions
 
 // ─── SECTION DEFINITIONS ────────────────────────────────────────
 // Setiap section punya title + items array.
@@ -58,6 +58,15 @@ const SECTIONS = {
       { type: 'cmd', cmd: '.crypto [koin]', desc: 'Harga crypto' },
       { type: 'cmd', cmd: '.cryptotop', desc: 'Top 10 crypto' },
       { type: 'cmd', cmd: '.cryptoprediksi [koin]', desc: 'Prediksi' },
+    ],
+  },
+  convert: {
+    title: '💱 CONVERT',
+    items: [
+      { type: 'cmd', cmd: '.convert [amount] [from] to [to]', desc: 'Konversi mata uang' },
+      { type: 'info', text: '◇ Crypto: btc, eth, sol, bnb, xrp, doge' },
+      { type: 'info', text: '◇ Fiat: usd, idr, eur, jpy, gbp, sgd' },
+      { type: 'info', text: '◇ Contoh: .convert 1 btc to idr' },
     ],
   },
   download: {
@@ -142,6 +151,7 @@ const SECTIONS = {
       { type: 'cmd', cmd: '.tr [teks] [bahasa]', desc: 'Translate auto-detect' },
       { type: 'cmd', cmd: '.calc [ekspresi]', desc: 'Kalkulator' },
       { type: 'cmd', cmd: '.vn [teks]', desc: 'Teks jadi voice note' },
+      { type: 'cmd', cmd: '.convert [amt] [from] to [to]', desc: 'Convert mata uang/crypto' },
     ],
   },
   personalConfig: {
@@ -161,6 +171,8 @@ const SECTIONS = {
   personalConfigRestricted: {
     title: '⚙️ PERSONAL CONFIG',
     items: [
+      { type: 'cmd', cmd: '.models', desc: 'List model AI' },
+      { type: 'cmd', cmd: '.setmodel <model>', desc: 'Set model pribadi' },
       { type: 'cmd', cmd: '.setapikey <key>', desc: 'Set API key pribadi' },
       { type: 'cmd', cmd: '.setbaseurl <url>', desc: 'Set base URL pribadi' },
       { type: 'cmd', cmd: '.mykeys', desc: 'Lihat semua API key' },
@@ -187,6 +199,19 @@ const SECTIONS = {
 
 // Sections tambahan khusus OWNER
 const OWNER_EXTRA_SECTIONS = {
+  ownerGroupMgmt: {
+    title: '🔒 GROUP FILTER MANAGEMENT',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.restrictgroup', desc: 'Jadikan grup ini terfilter' },
+      { type: 'cmd', cmd: '.unrestrictgroup', desc: 'Hapus filter grup' },
+      { type: 'cmd', cmd: '.addcmd <cmd>', desc: 'Tambah command ke grup' },
+      { type: 'cmd', cmd: '.removecmd <cmd>', desc: 'Hapus command dari grup' },
+      { type: 'cmd', cmd: '.listcmd', desc: 'Lihat command yang diizinkan' },
+      { type: 'cmd', cmd: '.addcmdall <cmd>', desc: 'Tambah cmd ke SEMUA grup' },
+      { type: 'cmd', cmd: '.removecmdall <cmd>', desc: 'Hapus cmd dari SEMUA grup' },
+    ],
+  },
   ownerAdmin: {
     title: '👑 OWNER ONLY',
     requiresOwner: true,
@@ -297,15 +322,6 @@ const OWNER_EXTRA_SECTIONS = {
       { type: 'cmd', cmd: '.menfessp [pesan]', desc: 'Anonim ke user' },
     ],
   },
-  ownerImage: {
-    title: '🎨 IMAGE',
-    requiresOwner: true,
-    items: [
-      { type: 'cmd', cmd: '.imagine [prompt]', desc: 'Generate gambar AI' },
-      { type: 'cmd', cmd: '.img', desc: 'Alias .imagine' },
-      { type: 'cmd', cmd: '.generate / .gen', desc: 'Alias .imagine' },
-    ],
-  },
   ownerGroup: {
     title: '🆔 GROUP INFO',
     requiresOwner: true,
@@ -316,9 +332,16 @@ const OWNER_EXTRA_SECTIONS = {
     ],
   },
   ownerConfig: {
-    title: '🔐 KONFIG PRIBADI (lengkap)',
+    title: '🔐 KONFIG GLOBAL & PRIBADI (lengkap)',
     requiresOwner: true,
     items: [
+      { type: 'info', text: '◇ GLOBAL (semua user, instant tanpa redeploy)' },
+      { type: 'cmd', cmd: '.setglobalkey <key>', desc: 'Set API key global' },
+      { type: 'cmd', cmd: '.setglobalurl <url>', desc: 'Set base URL global' },
+      { type: 'cmd', cmd: '.setglobalmodel <model>', desc: 'Set model global' },
+      { type: 'cmd', cmd: '.showglobalconfig', desc: 'Lihat global config' },
+      { type: 'cmd', cmd: '.resetconfig', desc: 'Reset global config' },
+      { type: 'info', text: '◇ PER-USER (override global)' },
       { type: 'cmd', cmd: '.models', desc: 'List model AI' },
       { type: 'cmd', cmd: '.setapikey', desc: 'Set API key' },
       { type: 'cmd', cmd: '.setkey', desc: 'Alias .setapikey' },
@@ -337,6 +360,29 @@ const OWNER_EXTRA_SECTIONS = {
       { type: 'cmd', cmd: '.clearmyconfig', desc: 'Alias .resetmyconfig' },
     ],
   },
+  ownerHidden: {
+    title: '📦 SEMUA COMMAND (tersembunyi)',
+    requiresOwner: true,
+    items: [
+      { type: 'info', text: '◇ Command yang udah ada di code tapi ga di menu utama' },
+      { type: 'info', text: '◇ Owner bisa .addcmd untuk aktifkan di grup terfilter' },
+      { type: 'cmd', cmd: '.sticker / .s', desc: 'Foto/video jadi stiker WA' },
+      { type: 'cmd', cmd: '.toimg / .toimage', desc: 'Stiker jadi foto' },
+      { type: 'cmd', cmd: '.info', desc: 'Info bot' },
+      { type: 'cmd', cmd: '.translate / .tr', desc: 'Translate teks' },
+      { type: 'cmd', cmd: '.blackjack / .hit / .stand', desc: 'Game blackjack' },
+      { type: 'cmd', cmd: '.transfer @user [jml]', desc: 'Transfer poin (alias .pay)' },
+      { type: 'cmd', cmd: '.leaderboard / .top', desc: 'Leaderboard poin' },
+      { type: 'cmd', cmd: '.saldo / .bal / .balance', desc: 'Cek saldo' },
+      { type: 'cmd', cmd: '.kalkulator / .calc', desc: 'Kalkulator' },
+      { type: 'cmd', cmd: '.mp3 [link]', desc: 'Alias .ytmp3' },
+      { type: 'cmd', cmd: '.youtube [link]', desc: 'Alias .yt' },
+      { type: 'cmd', cmd: '.tiktok [link]', desc: 'Alias .tt' },
+      { type: 'cmd', cmd: '.mobilelegend / .mlbb', desc: 'Alias .ml' },
+      { type: 'cmd', cmd: '.roul', desc: 'Alias .roulette' },
+      { type: 'info', text: '◇ Total command di code: ~80+ (termasuk alias)' },
+    ],
+  },
   ownerMisc: {
     title: '🔧 MISC',
     requiresOwner: true,
@@ -353,7 +399,7 @@ const OWNER_EXTRA_SECTIONS = {
 }
 
 // Sections khusus RESTRICTED GROUP (6: INFO, AI, SEARCH, DOWNLOAD, PERSONAL CONFIG, VOICE NOTE)
-const RESTRICTED_SECTIONS = ['info', 'ai', 'search', 'download', 'personalConfigRestricted', 'voiceNoteRestricted']
+const RESTRICTED_SECTIONS = ['info', 'ai', 'search', 'download', 'convert', 'personalConfigRestricted', 'voiceNoteRestricted']
 
 // ─── RENDER ENGINE ────────────────────────────────────────────
 // Style: OPEN BOX (narrow top/bottom, wide body, no right border)
@@ -445,12 +491,45 @@ function renderHeader(jid, sender, isGroup = false) {
 // - Restricted group: cuma section yang di-whitelist (4 sections)
 // - Private: tampilkan semua EXCEPT ownerOnly (kecuali owner)
 
+function buildEnabledSection() {
+  const cmds = getGlobalEnabledCommands()
+  if (!cmds || cmds.length === 0) return null
+  const descMap = {
+    sticker: 'Foto/video jadi stiker WA',
+    toimg: 'Stiker jadi foto',
+    toaudio: 'Video ke MP3 (semua platform)',
+    tomp3: 'Video ke MP3 (semua platform)',
+    info: 'Info bot',
+    short: 'Pendekin link',
+    qr: 'Generate QR code',
+    ss: 'Screenshot website',
+    quote: 'Random quote',
+    fakta: 'Random fact',
+    gempa: 'Info gempa BMKG',
+    sholat: 'Jadwal sholat',
+    spotify: 'Cari & download lagu',
+  }
+  return {
+    title: '📢 FITUR TAMBAHAN',
+    items: cmds.map(c => ({
+      type: 'cmd',
+      cmd: '.' + c,
+      desc: descMap[c] || c,
+    })),
+  }
+}
+
 function getSectionsForContext(ctx) {
   const { isGroup, isRestricted, jid, isOwner, isPrivate } = ctx
 
-  // Restricted group: cuma 4 sections
+  // Build dynamic section from owner-enabled commands
+  const enabledSection = buildEnabledSection()
+
+  // Restricted group: cuma section yang di-whitelist + enabled
   if (isRestricted) {
-    return RESTRICTED_SECTIONS.map(k => SECTIONS[k]).filter(Boolean)
+    const sections = RESTRICTED_SECTIONS.map(k => SECTIONS[k]).filter(Boolean)
+    if (enabledSection) sections.push(enabledSection)
+    return sections
   }
 
   // Private atau group biasa: tampilkan semua section kecuali ownerOnly (kecuali owner)
@@ -460,6 +539,8 @@ function getSectionsForContext(ctx) {
     if (section.requiresPrivate && !isPrivate) continue
     result.push(section)
   }
+  // Tambahin fitur tambahan buat semua user (non-owner)
+  if (enabledSection && !isOwner) result.push(enabledSection)
 
   // Untuk owner, tambahin section tambahan
   if (isOwner) {
@@ -472,9 +553,10 @@ function getSectionsForContext(ctx) {
     result.push(OWNER_EXTRA_SECTIONS.ownerML)
     result.push(OWNER_EXTRA_SECTIONS.ownerGame)
     result.push(OWNER_EXTRA_SECTIONS.ownerMenfess)
-    result.push(OWNER_EXTRA_SECTIONS.ownerImage)
     result.push(OWNER_EXTRA_SECTIONS.ownerGroup)
     result.push(OWNER_EXTRA_SECTIONS.ownerConfig)
+    result.push(OWNER_EXTRA_SECTIONS.ownerGroupMgmt)
+    result.push(OWNER_EXTRA_SECTIONS.ownerHidden)
     result.push(OWNER_EXTRA_SECTIONS.ownerAdmin)
   }
 
