@@ -575,6 +575,8 @@ case 'fbdl':
 case 'clip':
 case 'dl':
 case 'download':
+case 'toaudio':
+case 'tomp3':
   await handleDownload(sock, msg, text, command)
           break
         case 'autoclip':
@@ -1286,7 +1288,16 @@ case 'download':
         case 'clearmyconfig':
         case 'apitest':
         case 'testapikey':
-        case 'checkapi': {
+        case 'checkapi':
+        case 'setglobalkey':
+        case 'setglobalapikey':
+        case 'setglobalurl':
+        case 'setglobalbaseurl':
+        case 'setglobalmodel':
+        case 'setglobalhermesmodel':
+        case 'showglobalconfig':
+        case 'globalconfig':
+        case 'globalcfg': {
           const handled = await configHandler.handle(sock, msg, body, sender)
           // handle() returns null kalau command ga match → biarin flow lanjut
           if (handled !== null) break
