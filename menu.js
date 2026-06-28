@@ -335,13 +335,6 @@ const OWNER_EXTRA_SECTIONS = {
     title: '🔐 KONFIG GLOBAL & PRIBADI (lengkap)',
     requiresOwner: true,
     items: [
-      { type: 'info', text: '◇ GLOBAL (semua user, instant tanpa redeploy)' },
-      { type: 'cmd', cmd: '.setglobalkey <key>', desc: 'Set API key global' },
-      { type: 'cmd', cmd: '.setglobalurl <url>', desc: 'Set base URL global' },
-      { type: 'cmd', cmd: '.setglobalmodel <model>', desc: 'Set model global' },
-      { type: 'cmd', cmd: '.showglobalconfig', desc: 'Lihat global config' },
-      { type: 'cmd', cmd: '.resetconfig', desc: 'Reset global config' },
-      { type: 'info', text: '◇ PER-USER (override global)' },
       { type: 'cmd', cmd: '.models', desc: 'List model AI' },
       { type: 'cmd', cmd: '.setapikey', desc: 'Set API key' },
       { type: 'cmd', cmd: '.setkey', desc: 'Alias .setapikey' },
