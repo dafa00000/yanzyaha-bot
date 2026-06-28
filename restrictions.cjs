@@ -80,9 +80,12 @@ const DEFAULT_RESTRICTED_GROUPS = {
     'models',
     'setapikey',
     'setbaseurl',
-    'mykeys',
+    'setapikey', 'setbaseurl', 'mykeys',
     'myconfig',
     'listcmd',
+    'addcmd', 'removecmd', 'addcmdall', 'removecmdall',
+    'restrictgroup', 'unrestrictgroup',
+    'enablecmd', 'disablecmd',
   ],
 }
 
