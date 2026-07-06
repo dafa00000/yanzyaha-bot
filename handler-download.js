@@ -340,7 +340,42 @@ async function downloadTikTok(url, retries = 2) {
     })
   })
 
-  // Strategy 2: yt-dlp fallback
+  // Strategy 2: discardapi (free, no auth)
+  strategies.push(async () => {
+    const result = await downloadViaDiscardapi(url, 'tiktok')
+    if (!result?.url) throw new Error('discardapi no url')
+    const filePath = path.join(TMP_DIR, 'tt_' + Date.now() + '.mp4')
+    const videoRes = await axios.get(result.url, { responseType: 'stream', timeout: TIMEOUT })
+    return new Promise((resolve, reject) => {
+      const writer = fs.createWriteStream(filePath)
+      videoRes.data.pipe(writer)
+      writer.on('finish', () => resolve({ filePath, title: 'tiktok', source: 'discardapi' }))
+      writer.on('error', reject)
+    })
+  })
+
+  // Strategy 3: cobalt API (returns direct URL)
+  strategies.push(async () => {
+    const cobaltUrl = process.env.COBALT_URL || 'https://api.cobalt.tools/'
+    const apiUrl = cobaltUrl.endsWith('/') ? cobaltUrl.slice(0, -1) : cobaltUrl
+    const res = await axios.post(apiUrl, { url, filenamePattern: 'basic' }, {
+      timeout: 60000,
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      validateStatus: s => s < 500,
+    })
+    const videoUrl = res.data?.url || res.data?.streamUrl
+    if (!videoUrl) throw new Error('cobalt no url')
+    const filePath = path.join(TMP_DIR, 'tt_' + Date.now() + '.mp4')
+    const videoRes = await axios.get(videoUrl, { responseType: 'stream', timeout: TIMEOUT })
+    return new Promise((resolve, reject) => {
+      const writer = fs.createWriteStream(filePath)
+      videoRes.data.pipe(writer)
+      writer.on('finish', () => resolve({ filePath, title: 'tiktok', source: 'cobalt' }))
+      writer.on('error', reject)
+    })
+  })
+
+  // Strategy 4: yt-dlp fallback
   strategies.push(async () => {
     const filePath = await downloadWithYtdlp(url, false, 'tiktok')
     return { filePath, title: 'tiktok' }
@@ -592,13 +627,46 @@ async function downloadInstagramRobust(url) {
     return null
   })
 
-  // Strategy 5: yt-dlp (works if Railway IP not blocked, no cookies needed)
+  // Strategy 5: cobalt API (self-hosted or public instance)
+  strategies.push(async () => {
+    const cobaltInstances = process.env.COBALT_URL
+      ? [process.env.COBALT_URL]
+      : ['https://co.eepy.today/', 'https://api.cobalt.tools/']
+    for (const instance of cobaltInstances) {
+      try {
+        const apiUrl = instance.endsWith('/') ? instance.slice(0, -1) : instance
+        console.log('[igdl] trying cobalt ' + apiUrl + '...')
+        const res = await axios.post(apiUrl, { url, filenamePattern: 'basic' }, {
+          timeout: 60000,
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          validateStatus: s => s < 500,
+        })
+        const videoUrl = res.data?.url || res.data?.streamUrl
+        if (videoUrl) {
+          console.log('[igdl] got URL via cobalt (' + apiUrl + ')')
+          const filePath = path.join(TMP_DIR, 'ig_' + Date.now() + '.mp4')
+          const videoRes = await axios.get(videoUrl, { responseType: 'stream', timeout: 60000 })
+          return new Promise((resolve, reject) => {
+            const writer = fs.createWriteStream(filePath)
+            videoRes.data.pipe(writer)
+            writer.on('finish', () => resolve({ filePath, source: 'cobalt', type: 'file', strategy: 'cobalt' }))
+            writer.on('error', reject)
+          })
+        }
+      } catch (e) {
+        console.error('[igdl] cobalt ' + instance + ' failed:', e.message?.slice(0, 100))
+      }
+    }
+    return null
+  })
+
+  // Strategy 6: yt-dlp (works if Railway IP not blocked, no cookies needed)
   strategies.push(async () => {
     const filePath = await downloadWithYtdlp(url, false, 'instagram')
     return { filePath, source: 'yt-dlp', type: 'file', strategy: 'yt-dlp' }
   })
 
-  // Strategy 6: yt-dlp with cookies (ONLY if user provided them — optional)
+  // Strategy 7: yt-dlp with cookies (ONLY if user provided them — optional)
   strategies.push(async () => {
     const ua = '"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"'
     const cookiesArg = buildYtdlpCookiesArg('instagram')

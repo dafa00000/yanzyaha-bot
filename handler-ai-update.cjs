@@ -35,15 +35,35 @@ async function translatePrompt(prompt, groqKey) {
 }
 
 async function generateImage(prompt, groqKey) {
-  const envLines = fs.readFileSync(require('path').join(process.cwd(), '.env'), 'utf8').split('\n');
-  const getEnv = k => { const l = envLines.find(x => x.startsWith(k + '=')); return l ? l.split('=').slice(1).join('=').trim() : ''; };
-  const accountId = getEnv('CF_ACCOUNT_ID') || process.env.CF_ACCOUNT_ID;
-  const token = getEnv('CF_TOKEN') || process.env.CF_TOKEN;
-  if (!accountId || !token) throw new Error('CF credentials tidak ditemukan');
+  // Try Cloudflare Workers AI first, fallback to pollinations.ai (no auth needed)
+  let accountId = '', token = '';
+  try {
+    const envPath = require('path').join(process.cwd(), '.env');
+    if (fs.existsSync(envPath)) {
+      const envLines = fs.readFileSync(envPath, 'utf8').split('\\n');
+      const getEnv = k => { const l = envLines.find(x => x.startsWith(k + '=')); return l ? l.split('=').slice(1).join('=').trim() : ''; };
+      accountId = getEnv('CF_ACCOUNT_ID') || '';
+      token = getEnv('CF_TOKEN') || '';
+    }
+  } catch {}
+  accountId = accountId || process.env.CF_ACCOUNT_ID || '';
+  token = token || process.env.CF_TOKEN || '';
 
   const englishPrompt = await translatePrompt(prompt, groqKey);
   const cleanPrompt = englishPrompt + ', high quality, detailed, realistic, 4k';
   console.log('[ImageGen] Final prompt:', cleanPrompt);
+
+  // Fallback to pollinations.ai if no CF credentials
+  if (!accountId || !token) {
+    console.log('[ImageGen] CF creds missing, using pollinations.ai');
+    const encoded = encodeURIComponent(cleanPrompt);
+    const pollUrl = 'https://image.pollinations.ai/prompt/' + encoded + '?width=1024&height=1024&nologo=true&model=flux';
+    const res = await fetch(pollUrl, { signal: AbortSignal.timeout(120000) });
+    if (!res.ok) throw new Error('Pollinations error: ' + res.status);
+    const buf = Buffer.from(await res.arrayBuffer());
+    console.log('[ImageGen] Pollinations buffer size:', buf.length);
+    return buf;
+  }
 
   const url = 'https://api.cloudflare.com/client/v4/accounts/' + accountId + '/ai/run/@cf/black-forest-labs/flux-1-schnell';
   const res = await fetch(url, {
@@ -64,6 +84,7 @@ async function generateImage(prompt, groqKey) {
     return buf;
   }
   const data = await res.json();
+
   if (!data.success) throw new Error(data.errors?.[0]?.message || 'CF gagal');
   const base64 = data.result?.image;
   if (!base64) throw new Error('Tidak ada gambar di response CF');

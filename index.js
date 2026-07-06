@@ -386,15 +386,9 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     const command = args[0]?.toLowerCase()
     const text = args.slice(1).join(' ')
 
-    // Group restriction check: if this group is restricted and command is not in allowlist, block.
+    // Group restriction check: silently ignore blocked commands in restricted groups.
     if (isGroup && command && !isCommandAllowed(from, command)) {
-      const allowed = getAllowedCommands(from) || []
-      await sendText(
-        `🔒 *Command \`.${command}\` ga tersedia di grup ini.*\n\n` +
-        `Grup ini di-restrict. Command yang diizinkan: \`${allowed.join(', ')}\`\n` +
-        `Cek \`.menu\` buat liat menu yang tersedia.`
-      )
-      return
+      return  // silent ignore
     }
 
     // Log: distinguish group vs private + show full JID (not just numeric prefix)
