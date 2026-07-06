@@ -2,7 +2,9 @@
 const path = require('path');
 const fs = require('fs');
 
-// ─── ROTASI API KEY GROQ ─────────────────────────────────────
+// ─── ROTASI API KEY GROQ ────────────────────────────────────
+const GROQ_KEYS = (process.env.GROQ_KEYS || '').split(',').filter(Boolean);
+let groqKeyIndex = 0;
 
 // ─── IMAGE GENERATION (Multi Fallback) ───────────────────────────────
 
