@@ -2,9 +2,7 @@
 const path = require('path');
 const fs = require('fs');
 
-// ─── ROTASI API KEY GROQ ────────────────────────────────────
-const GROQ_KEYS = (process.env.GROQ_KEYS || '').split(',').filter(Boolean);
-let groqKeyIndex = 0;
+// ─── ROTASI API KEY GROQ ─────────────────────────────────────
 
 // ─── IMAGE GENERATION (Multi Fallback) ───────────────────────────────
 
@@ -338,6 +336,8 @@ async function handle(sock, m, geminiKey, groqKey) {
   // Abaikan pesan sangat pendek (emoji, "ok", "oke", dll)
   if (body.trim().length < 3) return false;
 
+// Abaikan pesan sangat pendek (emoji, "ok", "oke", dll)
+  if (body.trim().length < 3) return false;
 
   if (!groqKey) return false;
 
