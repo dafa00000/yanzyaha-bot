@@ -42,11 +42,18 @@ const SECTIONS = {
       { type: 'info', text: '◇ Per-user memory (Hermes session)' },
     ],
   },
-  search: {
-    title: '🔍 SEARCH & CUACA',
+  sticker: {
+    title: '🎨 STICKER & MEDIA',
     items: [
-      { type: 'cmd', cmd: '.search [query]', desc: 'Cari Google' },
-      { type: 'cmd', cmd: '.cuaca [kota]', desc: 'Info cuaca' },
+      { type: 'cmd', cmd: '.sticker / .s', desc: 'Foto/video jadi stiker' },
+      { type: 'cmd', cmd: '.toimg / .toimage', desc: 'Stiker jadi foto' },
+    ],
+  },
+  search: {
+    title: '🔍 SEARCH',
+    items: [
+      { type: 'cmd', cmd: '.search [query]', desc: 'Cari Google/DuckDuckGo' },
+      { type: 'cmd', cmd: '.cuaca [kota]', desc: 'Info cuaca (wttr.in)' },
     ],
   },
   market: {
@@ -108,18 +115,12 @@ const SECTIONS = {
       { type: 'cmd', cmd: '.jawab [jwb]', desc: 'Jawab kuis' },
     ],
   },
-  menfess: {
-    title: '📨 MENFESS',
-    items: [
-      { type: 'cmd', cmd: '.menfess [pesan]', desc: 'Kirim ke grup' },
-      { type: 'cmd', cmd: '.menfessp [pesan]', desc: 'Kirim private' },
-    ],
-  },
   others: {
     title: '📝 LAINNYA',
     items: [
-      { type: 'cmd', cmd: '.groupid', desc: 'Info group ID (kalo di grup)' },
+      { type: 'cmd', cmd: '.groupid / .idgc', desc: 'Info group ID (di grup)' },
       { type: 'cmd', cmd: '.teks [pesan]', desc: 'Echo pesan' },
+      { type: 'cmd', cmd: '.menfess [pesan]', desc: 'Kirim pesan anonim' },
     ],
   },
   economy: {
@@ -148,10 +149,10 @@ const SECTIONS = {
   tools: {
     title: '🛠️ TOOLS',
     items: [
-      { type: 'cmd', cmd: '.tr [teks] [bahasa]', desc: 'Translate auto-detect' },
-      { type: 'cmd', cmd: '.calc [ekspresi]', desc: 'Kalkulator' },
-      { type: 'cmd', cmd: '.vn [teks]', desc: 'Teks jadi voice note' },
-      { type: 'cmd', cmd: '.convert [amt] [from] to [to]', desc: 'Convert mata uang/crypto' },
+      { type: 'cmd', cmd: '.translate / .tr [teks] [lang]', desc: 'Translate teks' },
+      { type: 'cmd', cmd: '.calc / .kalkulator [expr]', desc: 'Kalkulator' },
+      { type: 'cmd', cmd: '.vn [teks]', desc: 'Teks → voice note' },
+      { type: 'cmd', cmd: '.convert [amt] [from] to [to]', desc: 'Konversi mata uang/crypto' },
     ],
   },
   personalConfig: {
@@ -224,6 +225,9 @@ const OWNER_EXTRA_SECTIONS = {
       { type: 'cmd', cmd: '.update', desc: 'Update bot' },
       { type: 'cmd', cmd: '.memory', desc: 'Lihat memory grup' },
       { type: 'cmd', cmd: '.forget', desc: 'Hapus memory grup' },
+      { type: 'cmd', cmd: '.broadcast [pesan]', desc: 'Broadcast ke semua user' },
+      { type: 'cmd', cmd: '.broadcastgroup [pesan]', desc: 'Broadcast ke semua grup' },
+      { type: 'cmd', cmd: '.broadcastall [pesan]', desc: 'Broadcast ke user + grup' },
     ],
   },
   ownerML: {
@@ -392,7 +396,7 @@ const OWNER_EXTRA_SECTIONS = {
 }
 
 // Sections khusus RESTRICTED GROUP (6: INFO, AI, SEARCH, DOWNLOAD, PERSONAL CONFIG, VOICE NOTE)
-const RESTRICTED_SECTIONS = ['info', 'ai', 'search', 'download', 'convert', 'personalConfigRestricted', 'voiceNoteRestricted']
+const RESTRICTED_SECTIONS = ['info', 'ai', 'sticker', 'search', 'download', 'convert', 'tools', 'personalConfigRestricted', 'voiceNoteRestricted']
 
 // ─── RENDER ENGINE ────────────────────────────────────────────
 // Style: OPEN BOX (narrow top/bottom, wide body, no right border)
@@ -492,6 +496,13 @@ function buildEnabledSection() {
     toimg: 'Stiker jadi foto',
     toaudio: 'Video ke MP3 (semua platform)',
     tomp3: 'Video ke MP3 (semua platform)',
+    translate: 'Translate teks (auto-detect)',
+    tr: 'Alias .translate',
+    calc: 'Kalkulator',
+    vn: 'Teks jadi voice note',
+    convert: 'Konversi mata uang/crypto',
+    cuaca: 'Info cuaca',
+    weather: 'Alias .cuaca',
     info: 'Info bot',
     short: 'Pendekin link',
     qr: 'Generate QR code',

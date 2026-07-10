@@ -57,6 +57,7 @@ const botConfig = require('./config.cjs')
 const format = require('./format.cjs')
 const economy = require('./handler-economy.cjs')
 const tools = require('./handler-tools.cjs')
+const broadcast = require('./handler-broadcast.cjs')
 
 // Bot version & metadata
 const BOT_VERSION = '2.2.0'
@@ -146,25 +147,71 @@ async function startBot() {
 
   if (!sock.authState.creds.registered) {
     console.log('ENV PHONE:', process.env.PHONE_NUMBER)
-    let nomor = process.env.PHONE_NUMBER || await tanya('📱 Masukkan nomor WA kamu...')
-    nomor = nomor.replace(/[^0-9]/g, '')
+
+    // ─── Phone number sanitization ────────────────────────────
+    // Remove ALL non-digit chars: +, spaces, dashes, parentheses, etc.
+    // Handles: "+62 812-3456-7890", "0812 3456 7890", "62-812-xxx"
+    let nomor = process.env.PHONE_NUMBER || await tanya('📱 Masukkan nomor WA kamu (contoh: 6281234567890): ')
+    nomor = String(nomor || '').replace(/[^0-9]/g, '')  // strip +, spaces, dashes, etc.
+
+    // Handle leading 0 → convert to country code 62 (Indonesia)
     if (nomor.startsWith('0')) nomor = '62' + nomor.slice(1)
+    // If no country code, assume Indonesia (62)
+    if (!nomor.startsWith('62') && nomor.length > 8) nomor = '62' + nomor
 
-    console.log(`\n✅ Nomor: ${nomor}`)
-    console.log('⏳ Meminta kode pairing...\n')
-    await new Promise(r => setTimeout(r, 3000))
+    // Validate: WhatsApp phone numbers are 6-15 digits (without +)
+    if (nomor.length < 6 || nomor.length > 15) {
+      console.error(`❌ Nomor tidak valid setelah sanitasi: "${nomor}" (panjang ${nomor.length})`)
+      console.error('   Nomor harus 6-15 digit, contoh: 6281234567890')
+      console.error('   Set environment variable: PHONE_NUMBER=6281234567890')
+      process.exit(1)
+    }
 
-    try {
-      const code = await sock.requestPairingCode(nomor)
-      console.log(`\n╔══════════════════════════╗`)
-      console.log(`║  🔑 KODE PAIRING: ${code}  ║`)
-      console.log(`╚══════════════════════════╝`)
-      console.log('\n1. Buka WhatsApp')
-      console.log('2. Titik 3 → Perangkat Tertaut')
-      console.log('3. Tautkan dengan Nomor Telepon')
-      console.log('4. Masukkan kode di atas\n')
-    } catch (e) {
-      console.log('❌ Gagal minta kode:', e.message)
+    console.log(`\n✅ Nomor (sanitized): ${nomor}`)
+    console.log('⏳ Meminta kode pairing... (tunggu ±15 detik)\n')
+
+    // ─── Retry logic with increasing backoff ──────────────────
+    // First attempt: wait 8s for socket to fully initialize
+    // Retry: wait progressively longer (10s, 15s) if first fails
+    const MAX_RETRIES = 3
+    const INITIAL_DELAY = 8000
+    let pairingCode = null
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const delay = INITIAL_DELAY + (attempt - 1) * 5000  // 8s, 13s, 18s
+      console.log(`📋 Attempt ${attempt}/${MAX_RETRIES}: menunggu ${delay / 1000}s sebelum request...`)
+      await new Promise(r => setTimeout(r, delay))
+
+      try {
+        // requestPairingCode can fail if:
+        // 1. Socket not ready / still connecting
+        // 2. Phone number format wrong
+        // 3. Rate limited by WhatsApp
+        // 4. Network issue
+        pairingCode = await sock.requestPairingCode(nomor)
+        console.log(`\n╔══════════════════════════╗`)
+        console.log(`║  🔑 KODE PAIRING: ${pairingCode}  ║`)
+        console.log(`╚══════════════════════════╝`)
+        console.log('\n1. Buka WhatsApp')
+        console.log('2. Titik 3 → Perangkat Tertaut')
+        console.log('3. Tautkan dengan Nomor Telepon')
+        console.log('4. Masukkan kode di atas\n')
+        break  // success, exit retry loop
+      } catch (e) {
+        console.error(`❌ Attempt ${attempt} gagal: ${e?.message || e}`)
+        if (e?.stack) console.error('   Stack:', e.stack.split('\n').slice(0, 3).join('\n'))
+
+        if (attempt < MAX_RETRIES) {
+          console.log(`   ↳ Retry dalam 5 detik...\n`)
+          await new Promise(r => setTimeout(r, 5000))
+        } else {
+          console.error('\n❌ Gagal minta kode pairing setelah', MAX_RETRIES, 'percobaan.')
+          console.error('   Kemungkinan: socket belum connect, nomor salah, atau rate limit.')
+          console.error('   Coba restart bot. Pastikan nomor benar:', nomor)
+          // Don't exit — let connection.update handler deal with reconnect.
+          // The user can fix PHONE_NUMBER and restart.
+        }
+      }
     }
   }
 
@@ -263,6 +310,8 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
       // Log group JID (if applicable) — was missing before, caused confusion
       if (isGroup) {
         console.log('[GROUP JID]', from, '| sender=', sender, '| members via metadata on demand');
+        // Save group JID for broadcast
+        try { broadcast.saveGroup(from) } catch {}
       }
 
       // Catat user
@@ -574,7 +623,6 @@ case 'tomp3':
   await handleDownload(sock, msg, text, command)
           break
         case 'autoclip':
-        case 'clip':
           await handleAutoClip(sock, msg, text)
           break
         case 'market':
@@ -1348,6 +1396,22 @@ case 'tomp3':
           saveBanned(newList);
           await sendText('✅ @' + unbanNum + ' telah di-unban.', { mentions: [unbanJid] });
           break;
+        }
+
+        // ==================== BROADCAST (OWNER ONLY) ====================
+        case 'broadcast':
+        case 'bc':
+        case 'broadcastgroup':
+        case 'bcgroup':
+        case 'broadcastall':
+        case 'bcall': {
+          const bcSenderNum = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(bcSenderNum)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            break
+          }
+          await broadcast.handleBroadcast(sock, msg, text, sender, body)
+          break
         }
 
       default:

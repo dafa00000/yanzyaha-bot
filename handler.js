@@ -87,38 +87,16 @@ export async function handleMessage(sock, msg) {
       case 'menu':
       case 'help':
       case 'start': {
-        const menuText = `╔══════════════════════╗
-║     🤖 YANZYAHA-BOT    ║
-╚══════════════════════╝
-
-📌 *INFO & TOOLS*
-• .menu — Tampilkan menu ini
-• .ping — Cek status bot
-• .info — Info bot
-• .owner — Kontak owner
-
-🖼️ *STIKER & GAMBAR*
-• .sticker / .s — Buat stiker dari foto/video
-• .toimg — Ubah stiker jadi foto
-• .toimage — (sama dengan .toimg)
-
-📥 *DOWNLOAD*
-• .yt (link) — Download video YouTube
-• .ytmp3 (link) — Download audio YouTube
-• .tt (link) — Download video TikTok
-- .clip [link] [mulai] [akhir] — ✂️ Potong/clip video
-
-🎮 *MOBILE LEGENDS*
-• .ml [ID] [Zone] — Cek profil & winrate ML
-• .mlhelp — Cara cari ID dan Zone ML
-
-📝 *LAINNYA*
-• .teks (pesan) — Echo pesan kamu
-
-_Prefix: titik (.)_
-_Contoh: .ml 123456789 2107_`
-
-        await reply(sock, msg, menuText)
+        // Delegate to menu.js (the canonical menu renderer).
+        // handler.js is a fallback handler — it should NOT have its own menu.
+        try {
+          const { getMenuText } = await import('./menu.js')
+          const menuText = getMenuText(msg)
+          await reply(sock, msg, menuText)
+        } catch {
+          // If menu.js fails to load, show minimal fallback
+          await reply(sock, msg, '🤖 *YANZYAHA-BOT*\n\nKetik *.menu* untuk daftar command.')
+        }
         break
       }
 
