@@ -168,26 +168,50 @@ async function startBot() {
     }
 
     console.log(`\n✅ Nomor (sanitized): ${nomor}`)
-    console.log('⏳ Meminta kode pairing... (tunggu ±15 detik)\n')
+
+    // ─── WAIT FOR SOCKET TO BE CONNECTED BEFORE REQUESTING PAIRING CODE ──
+    // requestPairingCode akan throw error kalau socket belum connected/open.
+    // Ini penyebab utama gagal sign-in: kode di-call sebelum socket ready.
+    const waitForConnection = () => new Promise((resolve) => {
+      let resolved = false
+      const timeout = setTimeout(() => {
+        if (!resolved) { resolved = true; resolve('timeout') }
+      }, 30000)
+      sock.ev.on('connection.update', ({ connection }) => {
+        if (connection === 'open' && !resolved) {
+          resolved = true
+          clearTimeout(timeout)
+          resolve('open')
+        } else if (connection === 'close' && !resolved) {
+          resolved = true
+          clearTimeout(timeout)
+          resolve('closed')
+        }
+      })
+    })
+
+    console.log('⏳ Menunggu koneksi WhatsApp terbuka...')
+    const connResult = await waitForConnection()
+
+    if (connResult === 'closed') {
+      console.error('❌ Koneksi tertutup sebelum bisa request pairing code.')
+      console.error('   Cek internet / firewall. Bot akan reconnect otomatis.')
+    } else if (connResult === 'timeout') {
+      console.error('⚠️ Timeout menunggu koneksi (30s). Coba request pairing code anyway...')
+    } else {
+      console.log('✅ Koneksi terbuka! Request pairing code...')
+    }
 
     // ─── Retry logic with increasing backoff ──────────────────
-    // First attempt: wait 8s for socket to fully initialize
-    // Retry: wait progressively longer (10s, 15s) if first fails
     const MAX_RETRIES = 3
-    const INITIAL_DELAY = 8000
     let pairingCode = null
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      const delay = INITIAL_DELAY + (attempt - 1) * 5000  // 8s, 13s, 18s
-      console.log(`📋 Attempt ${attempt}/${MAX_RETRIES}: menunggu ${delay / 1000}s sebelum request...`)
+      const delay = attempt === 1 ? 2000 : (attempt - 1) * 5000  // 2s, 5s, 10s
+      console.log(`📋 Attempt ${attempt}/${MAX_RETRIES}: menunggu ${delay / 1000}s...`)
       await new Promise(r => setTimeout(r, delay))
 
       try {
-        // requestPairingCode can fail if:
-        // 1. Socket not ready / still connecting
-        // 2. Phone number format wrong
-        // 3. Rate limited by WhatsApp
-        // 4. Network issue
         pairingCode = await sock.requestPairingCode(nomor)
         console.log(`\n╔══════════════════════════╗`)
         console.log(`║  🔑 KODE PAIRING: ${pairingCode}  ║`)
