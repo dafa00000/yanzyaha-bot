@@ -707,17 +707,6 @@ async function directChat(prompt, opts = {}) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs || TIMEOUT_MS)
 
-  // Pass multiple "disable reasoning" params — provider picks what it supports
-  // - enable_thinking: Qwen-style + tokenrouter passthrough
-  // - reasoning: false: OpenAI o-series
-  // - thinking: {type: disabled}: Anthropic
-  const noReasoningParams = {
-    enable_thinking: false,
-    reasoning: false,
-    thinking: { type: 'disabled' },
-    chat_template_kwargs: { enable_thinking: false },
-  }
-
   let res
   try {
     res = await fetch(url, {
@@ -726,7 +715,7 @@ async function directChat(prompt, opts = {}) {
         'Authorization': 'Bearer ' + apiKey,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ model: model, messages: messages, stream: false, max_tokens: MAX_TOKENS, ...noReasoningParams }),
+      body: JSON.stringify({ model: model, messages: messages, stream: false, max_tokens: MAX_TOKENS }),
       signal: controller.signal,
     })
   } finally {
