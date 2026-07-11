@@ -60,6 +60,7 @@ const tools = require('./handler-tools.cjs')
 const broadcast = require('./handler-broadcast.cjs')
 const menuMgmt = require('./handler-menu.cjs')
 const { loadCustomMenu } = menuMgmt
+const whaleHandler = require('./whale-handler.cjs')
 
 // Bot version & metadata
 const BOT_VERSION = '2.2.0'
@@ -481,6 +482,13 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (hiddenSet.has(cmdName)) {
         await sendText('🚫 *Command ini sedang dinonaktifkan oleh owner.*')
         return
+      }
+
+      // Cek konfirmasi buy dari whale tracker (beli/skip)
+      const isOwnerJid = OWNER_LIDS.includes((sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0])
+      if (isOwnerJid && !command) {
+        const handled = await whaleHandler.handleBuyConfirmation(sock, msg, body, sender, true, sendText)
+        if (handled) return
       }
 
       switch (command) {
@@ -1467,6 +1475,17 @@ case 'tomp3':
           if (!handled) {
             await sendText('⚠️ Command tidak dikenali. Ketik `.menucmdhelp` buat panduan.')
           }
+          break
+        }
+
+        // ─── WHALE TRACKER (Owner Only) ─────────────
+        case 'whale': {
+          const wSenderNum = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(wSenderNum)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            break
+          }
+          await whaleHandler.handleWhaleCommand(sock, msg, body, sender, true, sendText)
           break
         }
 

@@ -235,6 +235,9 @@ const OWNER_EXTRA_SECTIONS = {
       { type: 'cmd', cmd: '.delsection <name>', desc: 'Hapus section custom' },
       { type: 'cmd', cmd: '.listsections', desc: 'Lihat semua section' },
       { type: 'cmd', cmd: '.menucmdhelp', desc: 'Panduan menu management' },
+      { type: 'cmd', cmd: '.whale help', desc: 'Panduan whale tracker' },
+      { type: 'cmd', cmd: '.whale start', desc: 'Start monitoring whale Solana' },
+      { type: 'cmd', cmd: '.whale status', desc: 'Status whale tracker' },
     ],
   },
   ownerML: {
