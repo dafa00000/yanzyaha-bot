@@ -436,12 +436,24 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
     // Auto-execute code blocks in response
     const execResults = await executeCodeBlocks(ans)
     if (execResults && execResults.length > 0) {
+      // Hapus code block dari jawaban, ganti dengan output hasil saja (natural, no code visible)
+      let cleanAns = ans
       let execOutput = ''
       for (const r of execResults) {
-        const status = r.success ? '✅' : '❌'
-        execOutput += '\n' + status + ' Code executed (' + r.lang + '):\n```\n' + r.output.slice(0, 2000) + '\n```\n'
+        // Strip code block dari jawaban
+        cleanAns = cleanAns.replace(/```[\s\S]*?```/g, '').trim()
+        if (r.success) {
+          execOutput += '\n' + r.output.slice(0, 2000)
+        } else {
+          execOutput += '\n⚠️ ' + (r.error || r.output || 'Execution error').slice(0, 200)
+        }
       }
-      ans = ans + '\n\n📟 *Auto-Execute Result:*' + execOutput
+      // Trim jawaban kalau kosong (cuma code block doang)
+      if (cleanAns.length > 10) {
+        ans = cleanAns + '\n' + execOutput
+      } else {
+        ans = execOutput.trim()
+      }
     }
 
     stopTyping(typing, sock, jid)
@@ -838,12 +850,22 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
     // Auto-execute code blocks in response
     const execResults2 = await executeCodeBlocks(ans)
     if (execResults2 && execResults2.length > 0) {
+      // Hapus code block dari jawaban, ganti dengan output hasil saja (natural, no code visible)
+      let cleanAns2 = ans
       let execOutput2 = ''
       for (const r of execResults2) {
-        const status = r.success ? '✅' : '❌'
-        execOutput2 += '\n' + status + ' Code executed (' + r.lang + '):\n```\n' + r.output.slice(0, 2000) + '\n```\n'
+        cleanAns2 = cleanAns2.replace(/```[\s\S]*?```/g, '').trim()
+        if (r.success) {
+          execOutput2 += '\n' + r.output.slice(0, 2000)
+        } else {
+          execOutput2 += '\n⚠️ ' + (r.error || r.output || 'Execution error').slice(0, 200)
+        }
       }
-      ans = ans + '\n\n📟 *Auto-Execute Result:*' + execOutput2
+      if (cleanAns2.length > 10) {
+        ans = cleanAns2 + '\n' + execOutput2
+      } else {
+        ans = execOutput2.trim()
+      }
     }
 
     stopTyping(typing, sock, jid)
