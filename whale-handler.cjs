@@ -23,6 +23,7 @@
  */
 
 const tracker = require('./whale-tracker.cjs')
+const signer = require('./whale-signer.cjs')
 
 // Session state for pending buy confirmations
 // Key: ownerJid, Value: { tokenAddress, tokenSymbol, whale, mcap, expiry }
@@ -235,6 +236,63 @@ async function handleWhaleCommand(sock, msg, body, sender, isOwner, sendText) {
       return true
     }
 
+    // ─── SET WALLET (register Solana wallet for auto-buy/sell) ───
+    case 'setwallet': {
+      const key = (args[2] || '').trim()
+      if (!key || key.length < 30) {
+        await reply(
+          '❌ Format: `.whale setwallet <private_key>`\n\n' +
+          'Private key = base58 string dari Phantom/Solflare wallet export\n' +
+          '⚠️ JANGAN share private key ke siapapun!\n\n' +
+          'Cara export private key:\n' +
+          '• Phantom: Settings → Export Private Key\n' +
+          '• Solflare: Settings → Export Private Key'
+        )
+        return true
+      }
+
+      // Validate key & get public key
+      const validation = signer.validatePrivateKey(key)
+      if (!validation.valid) {
+        await reply(`❌ Private key invalid: ${validation.error}`)
+        return true
+      }
+
+      // Save to settings
+      tracker.updateSetting('walletPrivateKey', key)
+      tracker.updateSetting('walletPublicKey', validation.publicKey)
+
+      // Cek balance
+      const balance = await signer.getWalletBalance(validation.publicKey)
+
+      await reply(
+        `✅ *Wallet berhasil diset!*\n\n` +
+        `Public Key: \`${validation.publicKey}\`\n` +
+        `SOL Balance: ${balance.toFixed(6)} SOL ($${(balance * 180).toFixed(2)})\n\n` +
+        `🤖 Auto-buy & auto-sell siap dipakai!\n` +
+        `⚠️ Private key tersimpan di server — jaga keamanan VPS!`
+      )
+      return true
+    }
+
+    // ─── BALANCE ───
+    case 'balance': {
+      const settings = tracker.loadSettings()
+      const publicKey = settings.walletPublicKey
+      if (!publicKey) {
+        await reply('❌ Wallet belum diset. Ketik `.whale setwallet <private_key>`')
+        return true
+      }
+      const balance = await signer.getWalletBalance(publicKey)
+      await reply(
+        `💰 *Wallet Balance*\n\n` +
+        `Address: \`${publicKey}\`\n` +
+        `SOL: ${balance.toFixed(6)} ($${(balance * 180).toFixed(2)})\n` +
+        `Explorer: https://solscan.io/account/${publicKey}`
+      )
+      return true
+    }
+
     // ─── SET MCAP ───
     case 'mcap': {
       const amount = parseFloat(args[2] || '0')
@@ -326,6 +384,9 @@ async function handleWhaleCommand(sock, msg, body, sender, isOwner, sendText) {
         '` .whale autosell <on|off>` — Auto-sell saat whale sell\n' +
         '` .whale autobuy <on|off>` — Auto-buy dengan konfirmasi WA\n\n`' +
         ' .whale holdings` — Lihat posisi aktif\n\n`' +
+        '_Wallet:_\n' +
+        '` .whale setwallet <private_key>` — Set Solana wallet (auto buy/sell)\n' +
+        '` .whale balance` — Cek SOL balance\n\n`' +
         '_Konfirmasi buy:_\n' +
         'Setelah alert notifikasi, balas `beli` atau `skip`\n' +
         'Bot tunggu 60 detik, kalau ga dijawab = skip'
@@ -429,24 +490,54 @@ async function onWhaleSellDetected(sock, ownerJid, data, sendText) {
   // Check if we hold this token → auto-sell
   const holding = tracker.getHolding(tokenAddress)
   if (holding && holding.status === 'holding' && settings.autoSellOnWhaleSell) {
-    alert += `\n⚠️ Kita punya token ini! Auto-sell di-execute...`
+    alert += `\n⚠️ Kita punya token ini! Auto-sell executing...`
 
-    // Execute sell via Jupiter
+    // Get wallet keys from settings
+    const privateKey = settings.walletPrivateKey
+    const publicKey = settings.walletPublicKey
+
+    if (!privateKey || !publicKey) {
+      alert += `\n❌ Wallet belum diset — ga bisa auto-sell!`
+      await sendText(ownerJid, alert)
+      return
+    }
+
+    // Get current token balance from chain (in case we received more)
+    let tokenAmount = holding.amount
+    try {
+      const onChainBalance = await signer.getTokenBalance(publicKey, tokenAddress)
+      if (onChainBalance.amount > 0) {
+        tokenAmount = onChainBalance.amount
+      }
+    } catch (e) {}
+
+    // Build sell tx via Jupiter
     const sellResult = await tracker.buildSellTx(
       tokenAddress,
       tracker.SOL_MINT,
-      holding.amount,
-      process.env.WALLET_PUBLIC_KEY
+      tokenAmount,
+      publicKey
     )
 
     if (sellResult.success) {
-      // TODO: Sign & send transaction via wallet private key
-      // For now, just log — actual signing needs @solana/web3.js
-      alert += `\n✅ Sell tx built — PENDING SIGN\n`
-      alert += `Out amount: ${parseFloat(sellResult.outAmount) / 1e9} SOL\n`
-      alert += `Price impact: ${(sellResult.priceImpact * 100).toFixed(2)}%`
+      // Sign and send!
+      const sendResult = await signer.signAndSendConfirmed(sellResult.tx, privateKey)
+
+      if (sendResult.success) {
+        const solReceived = parseFloat(sellResult.outAmount) / 1e9
+        const pnl = solReceived - holding.solSpent
+
+        tracker.removeHolding(tokenAddress, sendResult.signature, solReceived, pnl)
+
+        alert += `\n✅ *AUTO-SELL EKSEKUSI!*\n`
+        alert += `SOL received: ${solReceived.toFixed(6)}\n`
+        alert += `P&L: ${pnl >= 0 ? '🟢' : '🔴'} ${pnl >= 0 ? '+' : ''}${pnl.toFixed(6)} SOL ($${(pnl * 180).toFixed(2)})\n`
+        alert += `Tx: ${sendResult.explorer}`
+      } else {
+        alert += `\n❌ Sell signing gagal: ${sendResult.error}`
+      }
     } else {
-      alert += `\n❌ Sell gagal: ${sellResult.msg}`
+      alert += `\n❌ Jupiter sell gagal: ${sellResult.msg}`
     }
   } else if (holding && holding.status === 'holding') {
     alert += `\n⚠️ Kita punya token ini! Auto-sell OFF — sell manual segera!`
@@ -497,34 +588,61 @@ async function handleBuyConfirmation(sock, msg, body, sender, isOwner, sendText)
   // Execute buy via Jupiter
   await reply(`🛒 Buy ${buyAmount} SOL — ${session.tokenSymbol || session.tokenAddress.slice(0, 8)}...`)
 
+  // Get wallet private key from settings
+  const settings = tracker.loadSettings()
+  const privateKey = settings.walletPrivateKey
+  const publicKey = settings.walletPublicKey
+
+  if (!privateKey || !publicKey) {
+    await reply(
+      '❌ Wallet belum diset!\n\n' +
+      'Set dulu: `.whale setwallet <private_key>`\n\n' +
+      'Private key = base58 string dari Phantom/Solflare wallet export\n' +
+      '⚠️ JANGAN share private key ke siapapun!'
+    )
+    pendingBuySessions.delete(ownerJid)
+    return true
+  }
+
   const amountLamports = Math.round(buyAmount * 1e9)
   const buyResult = await tracker.buildBuyTx(
     tracker.SOL_MINT,
     session.tokenAddress,
     amountLamports,
-    process.env.WALLET_PUBLIC_KEY
+    publicKey
   )
 
   if (buyResult.success) {
-    // TODO: Sign & send transaction
-    // Actual signing needs @solana/web3.js + private key
-    tracker.addHolding(
-      session.tokenAddress,
-      'pending',
-      parseFloat(buyResult.outAmount),
-      buyAmount
-    )
+    // Sign and send transaction!
+    await reply('⏳ Signing & sending transaction...')
+    const sendResult = await signer.signAndSendConfirmed(buyResult.tx, privateKey)
 
-    await reply(
-      `✅ Buy tx built — PENDING SIGN\n\n` +
-      `Token: ${session.tokenSymbol || session.tokenAddress.slice(0, 12)}\n` +
-      `SOL spent: ${buyAmount}\n` +
-      `Tokens received: ${parseFloat(buyResult.outAmount).toLocaleString()}\n` +
-      `Price impact: ${(parseFloat(buyResult.priceImpact) * 100).toFixed(2)}%\n\n` +
-      `⚠️ Tx perlu di-sign dengan wallet private key (coming soon)`
-    )
+    if (sendResult.success) {
+      tracker.addHolding(
+        session.tokenAddress,
+        sendResult.signature,
+        parseFloat(buyResult.outAmount),
+        buyAmount
+      )
+
+      await reply(
+        `✅ *BUY EKSEKUSI!*\n\n` +
+        `Token: ${session.tokenSymbol || session.tokenAddress.slice(0, 12)}\n` +
+        `SOL spent: ${buyAmount}\n` +
+        `Tokens received: ${parseFloat(buyResult.outAmount).toLocaleString()}\n` +
+        `Price impact: ${(parseFloat(buyResult.priceImpact) * 100).toFixed(2)}%\n` +
+        `Tx: ${sendResult.explorer}\n\n` +
+        `📊 Pantau di whale-sell alert — bot auto-sell kalau whale sell`
+      )
+    } else {
+      await reply(
+        `❌ *Buy gagal di signing!*\n\n` +
+        `Error: ${sendResult.error}\n\n` +
+        `${sendResult.explorer ? 'Cek tx: ' + sendResult.explorer : ''}`
+      )
+    }
   } else {
-    await reply(`❌ Buy gagal: ${buyResult.msg}`)
+    await reply(`❌ Jupiter build gagal: ${buyResult.msg}`)
   }
 
   pendingBuySessions.delete(ownerJid)

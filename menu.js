@@ -237,6 +237,8 @@ const OWNER_EXTRA_SECTIONS = {
       { type: 'cmd', cmd: '.menucmdhelp', desc: 'Panduan menu management' },
       { type: 'cmd', cmd: '.whale help', desc: 'Panduan whale tracker' },
       { type: 'cmd', cmd: '.whale start', desc: 'Start monitoring whale Solana' },
+      { type: 'cmd', cmd: '.whale setwallet <key>', desc: 'Set Solana wallet auto buy/sell' },
+      { type: 'cmd', cmd: '.whale balance', desc: 'Cek SOL balance' },
       { type: 'cmd', cmd: '.whale status', desc: 'Status whale tracker' },
     ],
   },
