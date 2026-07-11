@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  yanzyaha-bot:
+    build: .
+    container_name: wa-bot
+    restart: unless-stopped
+    volumes:
+      # Persistent: WA auth session + Hermes sessions + memory
+      - bot-data:/opt/data
+      # Temp files (download clips, stickers, dll)
+      - bot-tmp:/tmp/wa-tmp
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Jakarta
+    # Watch logs for pairing code:
+    #   docker logs -f wa-bot
+    # Restart bot:
+    #   docker restart wa-bot
+    # Stop bot:
+    #   docker stop wa-bot
+    # Start bot:
+    #   docker start wa-bot
+
+volumes:
+  bot-data:
+    # Persistent volume — WA auth + Hermes sessions survive container rebuild
+  bot-tmp:
+    # Temp files — auto-cleaned, ga perlu backup
