@@ -179,6 +179,62 @@ async function handleWhaleCommand(sock, msg, body, sender, isOwner, sendText) {
       return true
     }
 
+    // ─── ADD BATCH (bulk add from text) ───
+    case 'addbatch': {
+      // Usage: .whale addbatch <address1> <address2> ... 
+      // OR reply to a text file containing addresses (1 per line)
+      const restArgs = args.slice(2)
+      
+      // If reply to a message with text, parse it
+      const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
+      let addresses = []
+      
+      if (quoted && !restArgs.length) {
+        // Parse from quoted message
+        const quotedText = quoted.conversation || quoted.extendedTextMessage?.text || ''
+        addresses = quotedText.split('\n').map(l => l.trim().split(/\s+/)[0]).filter(a => a.length >= 32)
+      } else {
+        // Parse from args — split by commas, spaces, or newlines
+        const raw = restArgs.join(' ')
+        addresses = raw.split(/[,\n\s]+/).filter(a => a.length >= 32)
+      }
+      
+      if (addresses.length === 0) {
+        await reply(
+          '❌ Format: `.whale addbatch <addr1> <addr2> ...`\n' +
+          'Atau reply ke pesan berisi daftar address (1 per baris)\n\n' +
+          'Format baris: `address [label]`'
+        )
+        return true
+      }
+      
+      let added = 0, skipped = 0
+      for (const line of addresses) {
+        const parts = line.trim().split(/\s+/)
+        const addr = parts[0]
+        const label = parts.slice(1).join(' ') || ''
+        const result = tracker.addWallet(addr, label)
+        if (result.success) added++
+        else skipped++
+      }
+      
+      const total = tracker.listWallets().length
+      await reply(
+        `✅ *Bulk add selesai!*\n\n` +
+        `Added: ${added}\n` +
+        `Skipped (duplikat): ${skipped}\n` +
+        `Total wallets: ${total}`
+      )
+      return true
+    }
+
+    // ─── CLEAR ALL ───
+    case 'clear': {
+      tracker.saveWallets([])
+      await reply('✅ Semua wallet dihapus. Total: 0')
+      return true
+    }
+
     // ─── SET MCAP ───
     case 'mcap': {
       const amount = parseFloat(args[2] || '0')
@@ -260,8 +316,10 @@ async function handleWhaleCommand(sock, msg, body, sender, isOwner, sendText) {
         '` .whale start` — Start monitoring\n' +
         '` .whale stop` — Stop monitoring\n' +
         '` .whale status` — Lihat status\n\n`' +
-        ' .whale add <address> [label]` — Tambah wallet whale\n' +
+        '` .whale add <address> [label]` — Tambah wallet whale\n' +
+        '` .whale addbatch <addr1> <addr2> ...` — Bulk add massal\n' +
         '` .whale remove <address>` — Hapus wallet\n' +
+        '` .whale clear` — Hapus SEMUA wallet\n' +
         '` .whale list` — Lihat semua wallet\n\n`' +
         ' .whale mcap <amount>` — Set max MCAP (default $50K)\n' +
         '` .whale buyamount <sol>` — Set jumlah buy (default 0.05 SOL)\n' +
