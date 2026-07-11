@@ -417,14 +417,20 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
   try {
     // Auto-fetch URL kalau ada di body
     const promptWithContent = await maybeFetchUrl(body)
+    // Langsung pakai directChat — lebih cepat & reliable di VPS tanpa Hermes binary
+    // Hermes subprocess hanya kalau HERMES_BIN explicitly di-set dan exists
     let ans
-    try {
-      // Try with terminal+file tools first (can execute scripts)
-      ans = await runHermes(promptWithContent, { userEnv, _sender: sender, toolsets: ['terminal', 'file'] })
-    } catch (hermesErr) {
-      // Fallback: if Hermes subprocess fails (OOM, timeout, etc), use direct API
-      console.warn('[HERMES] runHermes failed, falling back to directChat:', hermesErr.message?.slice(0, 100))
-      ans = await directChat(promptWithContent, { userEnv, _sender: sender })
+    const hermesEnabled = process.env.HERMES_BIN && fs.existsSync(process.env.HERMES_BIN)
+    if (hermesEnabled) {
+      try {
+        ans = await runHermes(promptWithContent, { userEnv, _sender: sender, toolsets: ['terminal', 'file'] })
+      } catch (hermesErr) {
+        console.warn('[HERMES] runHermes failed, falling back to directChat:', hermesErr.message?.slice(0, 100))
+        ans = await directChat(promptWithContent, { userEnv, _sender: sender, timeoutMs: 90000 })
+      }
+    } else {
+      // No Hermes binary — direct API call only (fast, no subprocess overhead)
+      ans = await directChat(promptWithContent, { userEnv, _sender: sender, timeoutMs: 90000 })
     }
 
     // Auto-execute code blocks in response
@@ -445,7 +451,11 @@ async function handleChat(sock, msg, body, sender, userEnv = null) {
   } catch (e) {
     stopTyping(typing, sock, jid)
     console.error('[HERMES ERROR]', e.message)
-    await replyWa(sock, msg, `\u274c ${sec.redactSecrets(e.message)}`)
+    const isAbort = /abort|timeout|timed out/i.test(e.message || '')
+    const userMsg = isAbort
+      ? '⏳ AI lagi lambat nih. Server API lagi sibuk atau timeout. Coba lagi sebentar ya.'
+      : `❌ ${sec.redactSecrets(e.message)}`
+    await replyWa(sock, msg, userMsg)
   }
 }
 
@@ -816,16 +826,24 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
   const typing = await startTyping(sock, jid)
 
   try {
-    // .ai command pake runHermes dengan toolsets biar bisa execute scripts
+    // .ai command — pakai directChat untuk reliability
+    // Hermes subprocess hanya kalau HERMES_BIN di-set dan exists
     let prompt = text.trim()
     // Auto-fetch URL kalau ada di prompt
     prompt = await maybeFetchUrl(prompt)
     let ans
-    try {
-      ans = await runHermes(prompt, { userEnv, _sender: '_ai_' + (sender || 'unknown'), toolsets: ['terminal', 'file'] })
-    } catch (hermesErr) {
-      console.warn('[HERMES] runHermes failed for .ai, falling back to directChat:', hermesErr.message?.slice(0, 100))
-      ans = await directChat(prompt, { userEnv, _sender: '_ai_' + (sender || 'unknown') })
+    const hermesEnabled = process.env.HERMES_BIN && fs.existsSync(process.env.HERMES_BIN)
+    if (hermesEnabled) {
+      try {
+        ans = await runHermes(prompt, { userEnv, _sender: '_ai_' + (sender || 'unknown'), toolsets: ['terminal', 'file'] })
+      } catch (hermesErr) {
+        console.warn('[HERMES] runHermes failed for .ai, falling back to directChat:', hermesErr.message?.slice(0, 100))
+        ans = await directChat(prompt, { userEnv, _sender: sender || 'unknown', timeoutMs: 90000 })
+      }
+    } else {
+      // No Hermes — direct API, gunakan sender ID yang sama kayak chat biasa
+      // supaya memory/session konsisten antara .ai dan chat biasa
+      ans = await directChat(prompt, { userEnv, _sender: sender || 'unknown', timeoutMs: 90000 })
     }
 
     // Auto-execute code blocks in response
@@ -844,7 +862,11 @@ async function handleCommand(sock, msg, text, sender = null, userEnv = null) {
   } catch (e) {
     stopTyping(typing, sock, jid)
     console.error('[HERMES ERROR]', e.message)
-    await replyWa(sock, msg, `❌ ${sec.redactSecrets(e.message)}`)
+    const isAbort = /abort|timeout|timed out/i.test(e.message || '')
+    const userMsg = isAbort
+      ? '⏳ AI lagi lambat nih. Server API lagi sibuk atau timeout. Coba lagi sebentar ya.'
+      : `❌ ${sec.redactSecrets(e.message)}`
+    await replyWa(sock, msg, userMsg)
   }
 }
 
