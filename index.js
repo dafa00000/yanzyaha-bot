@@ -268,7 +268,7 @@ async function startBot() {
 
   
 // ─── BANNED LIST ─────────────────────────────────────────────
-const BANNED_FILE = './banned.json';
+const BANNED_FILE = path.join(process.env.HERMES_HOME || process.cwd(), 'banned.json');
 function loadBanned() {
   try { return JSON.parse(fs.readFileSync(BANNED_FILE, 'utf8')); } catch { return []; }
 }
@@ -276,7 +276,7 @@ function saveBanned(list) {
   fs.writeFileSync(BANNED_FILE, JSON.stringify(list, null, 2));
 }
 // ─── USER LIST ─────────────────────────────────────────────
-const USERS_FILE = './users.json';
+const USERS_FILE = path.join(process.env.HERMES_HOME || process.cwd(), 'users.json');
 function loadUsers() {
   try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch { return {}; }
 }

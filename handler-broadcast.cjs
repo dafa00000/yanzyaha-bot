@@ -15,8 +15,9 @@
 const fs = require('fs')
 const path = require('path')
 
-const USERS_FILE = path.join(process.cwd(), 'users.json')
-const BANNED_FILE = path.join(process.cwd(), 'banned.json')
+const DATA_DIR = process.env.HERMES_HOME || process.cwd()
+const USERS_FILE = path.join(DATA_DIR, 'users.json')
+const BANNED_FILE = path.join(DATA_DIR, 'banned.json')
 
 function loadUsers() {
   try {
@@ -37,7 +38,7 @@ function loadBanned() {
 
 // Cache group JIDs — bot knows them from message history
 // We store groups we've seen in a JSON file
-const GROUPS_FILE = path.join(process.cwd(), 'groups.json')
+const GROUPS_FILE = path.join(DATA_DIR, 'groups.json')
 
 function loadGroups() {
   try {
