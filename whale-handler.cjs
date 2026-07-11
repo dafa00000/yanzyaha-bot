@@ -50,7 +50,7 @@ async function handleWhaleCommand(sock, msg, body, sender, isOwner, sendText) {
   switch (subcmd) {
     // ─── START ───
     case 'start': {
-      const apiKey = process.env.HELIUS_API_KEY
+      const apiKey = process.env.HELIUS_API_KEY || '0218e26d-9bcf-4fec-a684-97c89aea09e3'
       if (!apiKey) {
         await reply(
           '❌ HELIUS_API_KEY belum diset!\n\n' +

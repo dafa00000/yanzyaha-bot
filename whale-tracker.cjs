@@ -126,7 +126,8 @@ function markTxSeen(sig, data) {
 // ─── HELIUS RPC ──────────────────────────────────────────────
 
 function getHeliusUrl(apiKey) {
-  return `https://mainnet.helius-rpc.com/?api-key=${apiKey}`
+  const key = apiKey || '0218e26d-9bcf-4fec-a684-97c89aea09e3'
+  return `https://mainnet.helius-rpc.com/?api-key=${key}`
 }
 
 /**
