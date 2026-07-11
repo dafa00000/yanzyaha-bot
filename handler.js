@@ -91,7 +91,7 @@ export async function handleMessage(sock, msg) {
         // handler.js is a fallback handler — it should NOT have its own menu.
         try {
           const { getMenuText } = await import('./menu.js')
-          const menuText = getMenuText(msg)
+          const menuText = await getMenuText(msg)
           await reply(sock, msg, menuText)
         } catch {
           // If menu.js fails to load, show minimal fallback

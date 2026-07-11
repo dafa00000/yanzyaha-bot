@@ -36,8 +36,8 @@ function notHas(s, sub, msg = '') { if (s.includes(sub)) throw new Error(`${msg 
 // ─── PRIVATE CHAT ───────────────────────────────────────────
 console.log('\n── private chat ──')
 
-await test('private: shows full menu (non-owner)', () => {
-  const out = getMenuText({
+await test('private: shows full menu (non-owner)', async () => {
+  const out = await getMenuText({
     key: { remoteJid: '628xxx@s.whatsapp.net', participant: '628xxx@s.whatsapp.net' }
   }, { isOwner: false })
   has(out, 'INFO')
@@ -50,16 +50,16 @@ await test('private: shows full menu (non-owner)', () => {
   notHas(out, 'OWNER CONFIG')
 })
 
-await test('private: owner sees owner config', () => {
-  const out = getMenuText({
+await test('private: owner sees owner config', async () => {
+  const out = await getMenuText({
     key: { remoteJid: '62895618805248@s.whatsapp.net', participant: '62895618805248@s.whatsapp.net' }
   }, { isOwner: true })
   has(out, 'OWNER CONFIG')
   has(out, 'OWNER ONLY')  // owner extra sections
 })
 
-await test('private: shows correct user in header', () => {
-  const out = getMenuText({
+await test('private: shows correct user in header', async () => {
+  const out = await getMenuText({
     key: { remoteJid: '628123456789@s.whatsapp.net', participant: '628123456789@s.whatsapp.net' }
   })
   has(out, '@628123456789')
@@ -69,8 +69,8 @@ await test('private: shows correct user in header', () => {
 // ─── NON-RESTRICTED GROUP ────────────────────────────────────
 console.log('\n── non-restricted group ──')
 
-await test('non-restricted group: shows Group field', () => {
-  const out = getMenuText({
+await test('non-restricted group: shows Group field', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: '120363000000000@g.us',
       participant: '628999999999@s.whatsapp.net'
@@ -81,8 +81,8 @@ await test('non-restricted group: shows Group field', () => {
   has(out, '@628999999999')
 })
 
-await test('non-restricted group: hides KONFIG PRIBADI/OWNER', () => {
-  const out = getMenuText({
+await test('non-restricted group: hides KONFIG PRIBADI/OWNER', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: '120363000000000@g.us',
       participant: '628999999999@s.whatsapp.net'
@@ -93,8 +93,8 @@ await test('non-restricted group: hides KONFIG PRIBADI/OWNER', () => {
   notHas(out, '👑 KONFIG OWNER')
 })
 
-await test('non-restricted group: shows DOWNLOAD section', () => {
-  const out = getMenuText({
+await test('non-restricted group: shows DOWNLOAD section', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: '120363000000000@g.us',
       participant: '628999999999@s.whatsapp.net'
@@ -109,8 +109,8 @@ console.log('\n── restricted group (120363405661184579@g.us) ──')
 
 const RESTRICTED_JID = '120363405661184579@g.us'
 
-await test('restricted: only shows allowed sections', () => {
-  const out = getMenuText({
+await test('restricted: only shows allowed sections', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: RESTRICTED_JID,
       participant: '628xxx@s.whatsapp.net'
@@ -126,8 +126,8 @@ await test('restricted: only shows allowed sections', () => {
   has(out, 'PERSONAL CONFIG') // Now shown in restricted groups
 })
 
-await test('restricted: only shows allowed AI commands', () => {
-  const out = getMenuText({
+await test('restricted: only shows allowed AI commands', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: RESTRICTED_JID,
       participant: '628xxx@s.whatsapp.net'
@@ -139,8 +139,8 @@ await test('restricted: only shows allowed AI commands', () => {
   notHas(out, '⌬ .menu')
 })
 
-await test('restricted: shows restricted footer message', () => {
-  const out = getMenuText({
+await test('restricted: shows restricted footer message', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: RESTRICTED_JID,
       participant: '628xxx@s.whatsapp.net'
@@ -151,8 +151,8 @@ await test('restricted: shows restricted footer message', () => {
   has(out, 'Minta owner')
 })
 
-await test('restricted: shows Group header', () => {
-  const out = getMenuText({
+await test('restricted: shows Group header', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: RESTRICTED_JID,
       participant: '628xxx@s.whatsapp.net'
@@ -163,8 +163,8 @@ await test('restricted: shows Group header', () => {
   has(out, '@628xxx')
 })
 
-await test('restricted: uses sender JID for Kamu (not group JID)', () => {
-  const out = getMenuText({
+await test('restricted: uses sender JID for Kamu (not group JID)', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: RESTRICTED_JID,
       participant: '628111222333@s.whatsapp.net'
@@ -178,7 +178,7 @@ await test('restricted: uses sender JID for Kamu (not group JID)', () => {
 // ─── .start REDIRECT ─────────────────────────────────────────
 console.log('\n── .start redirect ──')
 
-await test('start redirect: returns text for restricted group', () => {
+await test('start redirect: returns text for restricted group', async () => {
   const txt = getStartRedirectText(RESTRICTED_JID)
   ok(txt, 'should return non-null text')
   has(txt, 'Halo')
@@ -186,12 +186,12 @@ await test('start redirect: returns text for restricted group', () => {
   has(txt, 'kak')
 })
 
-await test('start redirect: returns null for non-restricted', () => {
+await test('start redirect: returns null for non-restricted', async () => {
   const txt = getStartRedirectText('120363000000000@g.us')
   eq(txt, null)
 })
 
-await test('start redirect: returns null for private chat', () => {
+await test('start redirect: returns null for private chat', async () => {
   const txt = getStartRedirectText('628xxx@s.whatsapp.net')
   eq(txt, null)
 })
@@ -199,8 +199,8 @@ await test('start redirect: returns null for private chat', () => {
 // ─── ALIGNMENT CHECKS ────────────────────────────────────────
 console.log('\n── alignment consistency (open box style) ──')
 
-await test('menu: every section has header (╭), body (│), footer (╰)', () => {
-  const out = getMenuText({
+await test('menu: every section has header (╭), body (│), footer (╰)', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: RESTRICTED_JID,
       participant: '628xxx@s.whatsapp.net'
@@ -226,8 +226,8 @@ await test('menu: every section has header (╭), body (│), footer (╰)', () 
   }
 })
 
-await test('menu: all footers use consistent 16-dash style', () => {
-  const out = getMenuText({
+await test('menu: all footers use consistent 16-dash style', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: RESTRICTED_JID,
       participant: '628xxx@s.whatsapp.net'
@@ -242,8 +242,8 @@ await test('menu: all footers use consistent 16-dash style', () => {
   }
 })
 
-await test('menu: ⌬ command » separator aligned within each section', () => {
-  const out = getMenuText({
+await test('menu: ⌬ command » separator aligned within each section', async () => {
+  const out = await getMenuText({
     key: {
       remoteJid: RESTRICTED_JID,
       participant: '628xxx@s.whatsapp.net'
@@ -269,8 +269,8 @@ await test('menu: ⌬ command » separator aligned within each section', () => {
   }
 })
 
-await test('menu: header rows use Label : value format (no ◇)', () => {
-  const out = getMenuText({
+await test('menu: header rows use Label : value format (no ◇)', async () => {
+  const out = await getMenuText({
     key: { remoteJid: '628xxx@s.whatsapp.net', participant: '628xxx@s.whatsapp.net' }
   })
   // First box is the header (User/Prefix)
@@ -285,8 +285,8 @@ await test('menu: header rows use Label : value format (no ◇)', () => {
   ok(!headerText.includes('◇'), 'header should not use ◇ prefix')
 })
 
-await test('menu: section info notes use ◇ prefix', () => {
-  const out = getMenuText({
+await test('menu: section info notes use ◇ prefix', async () => {
+  const out = await getMenuText({
     key: { remoteJid: '628xxx@s.whatsapp.net', participant: '628xxx@s.whatsapp.net' }
   })
   // AI section has info notes
@@ -294,8 +294,8 @@ await test('menu: section info notes use ◇ prefix', () => {
   has(out, '◇ Per-user memory')
 })
 
-await test('menu: command names not truncated', () => {
-  const out = getMenuText({
+await test('menu: command names not truncated', async () => {
+  const out = await getMenuText({
     key: { remoteJid: '628xxx@s.whatsapp.net', participant: '628xxx@s.whatsapp.net' }
   })
   // .autoclip (9 chars) should not become .autocli…

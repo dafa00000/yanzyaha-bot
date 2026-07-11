@@ -228,6 +228,13 @@ const OWNER_EXTRA_SECTIONS = {
       { type: 'cmd', cmd: '.broadcast [pesan]', desc: 'Broadcast ke semua user' },
       { type: 'cmd', cmd: '.broadcastgroup [pesan]', desc: 'Broadcast ke semua grup' },
       { type: 'cmd', cmd: '.broadcastall [pesan]', desc: 'Broadcast ke user + grup' },
+      { type: 'cmd', cmd: '.addcmdglobal <cmd> <sec> <desc>', desc: 'Tambah command ke menu global' },
+      { type: 'cmd', cmd: '.delcmdglobal <cmd>', desc: 'Hapus command dari menu global' },
+      { type: 'cmd', cmd: '.editcmddesc <cmd> <desc>', desc: 'Edit deskripsi command' },
+      { type: 'cmd', cmd: '.addsection <name> <title>', desc: 'Tambah section menu baru' },
+      { type: 'cmd', cmd: '.delsection <name>', desc: 'Hapus section custom' },
+      { type: 'cmd', cmd: '.listsections', desc: 'Lihat semua section' },
+      { type: 'cmd', cmd: '.menucmdhelp', desc: 'Panduan menu management' },
     ],
   },
   ownerML: {
@@ -568,7 +575,7 @@ function getSectionsForContext(ctx) {
 }
 
 // ─── MAIN ENTRY: getMenuText ────────────────────────────────────
-export function getMenuText(msg = null, opts = {}) {
+export async function getMenuText(msg = null, opts = {}) {
   const isGroup = !!(msg && msg.key?.remoteJid?.endsWith('@g.us'))
   const jid = msg?.key?.remoteJid || 'unknown'
   const sender = msg?.key?.participant || jid
@@ -578,11 +585,56 @@ export function getMenuText(msg = null, opts = {}) {
 
   const ctx = { isGroup, isRestricted, jid, isOwner, isPrivate }
 
+  // Load custom menu data
+  let customData = null
+  try {
+    const { loadCustomMenu } = await import('./handler-menu.cjs')
+    customData = loadCustomMenu()
+  } catch {}
+
   // Header
   const headerOut = renderHeader(jid, sender, isGroup)
 
   // Sections
   const sections = getSectionsForContext(ctx)
+
+  // Apply custom descs + hide hidden cmds
+  if (customData) {
+    const hiddenSet = new Set(customData.hiddenCmds || [])
+    for (const section of sections) {
+      // Filter hidden cmds
+      if (section.items) {
+        section.items = section.items.filter(it => {
+          if (it.type === 'cmd') {
+            const cmd = (it.cmd || '').replace(/^\./, '').split(/\s/)[0]
+            return !hiddenSet.has(cmd)
+          }
+          return true
+        })
+      }
+      // Apply custom descs
+      if (section.items) {
+        for (const it of section.items) {
+          if (it.type === 'cmd') {
+            const cmd = (it.cmd || '').replace(/^\./, '').split(/\s/)[0]
+            if (customData.customDesc && customData.customDesc[cmd]) {
+              it.desc = customData.customDesc[cmd]
+            }
+          }
+        }
+      }
+    }
+
+    // Add custom sections
+    if (customData.sections) {
+      for (const [name, items] of Object.entries(customData.sections)) {
+        if (items.length === 0) continue
+        const title = customData.sectionMeta?.[name]?.title || name
+        sections.push({ title, items })
+      }
+    }
+  }
+
   const sectionOuts = sections.map(renderSection)
 
   // Footer message (bedasarkan context)
@@ -632,5 +684,5 @@ export function getStartRedirectText(jid) {
   ].join('\n')
 }
 
-// Backward-compat export
-export const menuText = getMenuText(null)
+// Backward-compat export — getMenuText is now async, so callers must await
+export const menuText = null

@@ -58,6 +58,8 @@ const format = require('./format.cjs')
 const economy = require('./handler-economy.cjs')
 const tools = require('./handler-tools.cjs')
 const broadcast = require('./handler-broadcast.cjs')
+const menuMgmt = require('./handler-menu.cjs')
+const { loadCustomMenu } = menuMgmt
 
 // Bot version & metadata
 const BOT_VERSION = '2.2.0'
@@ -472,6 +474,15 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     console.log(`📩 [${jidType}] ${fromDisplay}: ${body}`)
 
     try {
+      // Cek apakah command di-disable global via menu management
+      const customData = loadCustomMenu()
+      const hiddenSet = new Set(customData.hiddenCmds || [])
+      const cmdName = command.replace(/^\./, '')
+      if (hiddenSet.has(cmdName)) {
+        await sendText('🚫 *Command ini sedang dinonaktifkan oleh owner.*')
+        return
+      }
+
       switch (command) {
         case 'menu':
         case 'help': {
@@ -481,7 +492,7 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
           // We do NOT use the video/image in assets/ for menu delivery anymore.
           // (If user wants a custom banner, use .setmenu video, but the menu
           //  text always goes as a separate message.)
-          const fullText = getMenuText(msg)
+          const fullText = await getMenuText(msg)
           console.log('[MENU] Request from', from, 'isGroup:', isGroup, 'len=' + fullText.length)
           try {
             await sendText(fullText)
@@ -1095,7 +1106,8 @@ case 'tomp3':
           }
           // Fallback: tampilkan menu
           const senderNum = (sender || '').split('@')[0].split(':')[0]
-          await sendText(getMenuText(msg, { isOwner: OWNER_LIDS.includes(senderNum) }))
+          const menuOut = await getMenuText(msg, { isOwner: OWNER_LIDS.includes(senderNum) })
+          await sendText(menuOut)
           break
         }
 
@@ -1435,6 +1447,26 @@ case 'tomp3':
             break
           }
           await broadcast.handleBroadcast(sock, msg, text, sender, body)
+          break
+        }
+
+        // ─── MENU MANAGEMENT (Owner Only) ─────────────
+        case 'addcmdglobal':
+        case 'delcmdglobal':
+        case 'editcmddesc':
+        case 'addsection':
+        case 'delsection':
+        case 'listsections':
+        case 'menucmdhelp': {
+          const mmSenderNum = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+          if (!OWNER_LIDS.includes(mmSenderNum)) {
+            await sendText('🔒 *Command ini khusus owner.*')
+            break
+          }
+          const handled = await menuMgmt.handleMenuCommand(sock, msg, command, text, sender, sendText)
+          if (!handled) {
+            await sendText('⚠️ Command tidak dikenali. Ketik `.menucmdhelp` buat panduan.')
+          }
           break
         }
 

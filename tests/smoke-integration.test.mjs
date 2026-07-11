@@ -74,7 +74,7 @@ function ok(c, m = 'expected truthy') { if (!c) throw new Error(m) }
 // ═════════════════════════════════════════════════════════
 console.log('\n── Module Integration ──')
 
-await test('all modules load without errors', () => {
+await test('all modules load without errors', async () => {
   // If we got here, all requires worked
   ok(memory, 'memory loaded')
   ok(bridge, 'bridge loaded')
@@ -84,7 +84,7 @@ await test('all modules load without errors', () => {
   ok(menu.getStartRedirectText, 'menu.getStartRedirectText loaded')
 })
 
-await test('restrictions.cjs: target group in allowlist', () => {
+await test('restrictions.cjs: target group in allowlist', async () => {
   const allowed = restrictions.getAllowedCommands('120363405661184579@g.us')
   ok(allowed.includes('menu'))
   ok(allowed.includes('forget'))
@@ -92,7 +92,7 @@ await test('restrictions.cjs: target group in allowlist', () => {
   ok(allowed.includes('ai'))
 })
 
-await test('memory.cjs: target group in MEMORY_GROUPS whitelist', () => {
+await test('memory.cjs: target group in MEMORY_GROUPS whitelist', async () => {
   ok(memory.MEMORY_GROUPS.has('120363405661184579@g.us'))
 })
 
@@ -101,8 +101,8 @@ await test('memory.cjs: target group in MEMORY_GROUPS whitelist', () => {
 // ═════════════════════════════════════════════════════════
 console.log('\n── Menu rendering ──')
 
-await test('menu private: full menu', () => {
-  const out = menu.getMenuText({
+await test('menu private: full menu', async () => {
+  const out = await menu.getMenuText({
     key: { remoteJid: '628xxx@s.whatsapp.net', participant: '628xxx@s.whatsapp.net' }
   })
   ok(out.includes('INFO'))
@@ -111,8 +111,8 @@ await test('menu private: full menu', () => {
   ok(out.includes('PERSONAL CONFIG'))
 })
 
-await test('menu restricted group: filtered (4 sections)', () => {
-  const out = menu.getMenuText({
+await test('menu restricted group: filtered (4 sections)', async () => {
+  const out = await menu.getMenuText({
     key: { remoteJid: '120363405661184579@g.us', participant: '628xxx@s.whatsapp.net' }
   })
   // 4 sections visible: INFO, AI, SEARCH, DOWNLOAD, PERSONAL CONFIG
@@ -125,13 +125,13 @@ await test('menu restricted group: filtered (4 sections)', () => {
   ok(!out.includes('SOSMED'))
 })
 
-await test('start redirect: works for restricted group', () => {
+await test('start redirect: works for restricted group', async () => {
   const txt = menu.getStartRedirectText('120363405661184579@g.us')
   ok(txt, 'should return text')
   ok(txt.includes('.menu'))
 })
 
-await test('start redirect: null for private', () => {
+await test('start redirect: null for private', async () => {
   eq(menu.getStartRedirectText('628xxx@s.whatsapp.net'), null)
 })
 
@@ -236,12 +236,12 @@ await test('memory: handles missing directory gracefully', async () => {
   eq(msgs, [])
 })
 
-await test('format: handles empty title', () => {
+await test('format: handles empty title', async () => {
   const out = format.box('', [{ emoji: '📌', label: 'Key', value: 'Val' }])
   ok(out.split('\n').length >= 3)
 })
 
-await test('format: handles null rows', () => {
+await test('format: handles null rows', async () => {
   const out = format.section('TEST', null)
   ok(out.split('\n').length === 2, 'empty section = header + footer')
 })
