@@ -235,11 +235,30 @@ const OWNER_EXTRA_SECTIONS = {
       { type: 'cmd', cmd: '.delsection <name>', desc: 'Hapus section custom' },
       { type: 'cmd', cmd: '.listsections', desc: 'Lihat semua section' },
       { type: 'cmd', cmd: '.menucmdhelp', desc: 'Panduan menu management' },
-      { type: 'cmd', cmd: '.whale help', desc: 'Panduan whale tracker' },
-      { type: 'cmd', cmd: '.whale start', desc: 'Start monitoring whale Solana' },
-      { type: 'cmd', cmd: '.whale setwallet <key>', desc: 'Set Solana wallet auto buy/sell' },
+    ],
+  },
+  ownerWhale: {
+    title: '🐋 WHALE TRACKER (Solana)',
+    requiresOwner: true,
+    items: [
+      { type: 'info', text: '◇ Monitor 300+ Solana whale wallets, auto buy/sell' },
+      { type: 'cmd', cmd: '.whale start', desc: 'Start monitoring whale wallets' },
+      { type: 'cmd', cmd: '.whale stop', desc: 'Stop monitoring' },
+      { type: 'cmd', cmd: '.whale status', desc: 'Lihat status tracker' },
+      { type: 'cmd', cmd: '.whale help', desc: 'Panduan lengkap whale' },
+      { type: 'cmd', cmd: '.whale add <addr> [label]', desc: 'Tambah wallet whale' },
+      { type: 'cmd', cmd: '.whale addbatch <addr1> <addr2>', desc: 'Bulk add massal' },
+      { type: 'cmd', cmd: '.whale remove <addr>', desc: 'Hapus wallet whale' },
+      { type: 'cmd', cmd: '.whale clear', desc: 'Hapus SEMUA wallet' },
+      { type: 'cmd', cmd: '.whale list', desc: 'Lihat semua wallet' },
+      { type: 'cmd', cmd: '.whale mcap <amount>', desc: 'Set max MCAP (default $50K)' },
+      { type: 'cmd', cmd: '.whale buyamount <sol>', desc: 'Set jumlah buy (default 0.05)' },
+      { type: 'cmd', cmd: '.whale autobuy <on|off>', desc: 'Toggle auto-buy (konfirmasi WA)' },
+      { type: 'cmd', cmd: '.whale autosell <on|off>', desc: 'Toggle auto-sell saat whale sell' },
+      { type: 'cmd', cmd: '.whale holdings', desc: 'Lihat posisi token aktif' },
+      { type: 'cmd', cmd: '.whale setwallet <key>', desc: 'Set Solana wallet (auto buy/sell)' },
       { type: 'cmd', cmd: '.whale balance', desc: 'Cek SOL balance' },
-      { type: 'cmd', cmd: '.whale status', desc: 'Status whale tracker' },
+      { type: 'info', text: '◇ Pas alert buy masuk, balas "beli" / "skip" / "beli 0.1"' },
     ],
   },
   ownerML: {
@@ -566,6 +585,7 @@ function getSectionsForContext(ctx) {
     result.push(OWNER_EXTRA_SECTIONS.ownerDownload)
     result.push(OWNER_EXTRA_SECTIONS.ownerPasar)
     result.push(OWNER_EXTRA_SECTIONS.ownerSosmed)
+    result.push(OWNER_EXTRA_SECTIONS.ownerWhale)
     result.push(OWNER_EXTRA_SECTIONS.ownerML)
     result.push(OWNER_EXTRA_SECTIONS.ownerGame)
     result.push(OWNER_EXTRA_SECTIONS.ownerMenfess)
