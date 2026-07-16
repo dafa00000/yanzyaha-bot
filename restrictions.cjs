@@ -1,8 +1,11 @@
 'use strict'
 // ─── GROUP COMMAND RESTRICTIONS ────────────────────────────────────────────
 // Per-group allowlist for commands. When a group JID is in RESTRICTED_GROUPS,
-// ONLY the commands listed for that group are allowed. Other commands get
-// rejected with "Command ini tidak tersedia di grup ini".
+// ONLY the commands listed for that group are allowed (for non-owners).
+// Other commands get rejected / silently ignored by the caller.
+//
+// Owner management commands are ALWAYS allowed even in restricted groups so
+// the owner cannot lock themselves out of .unrestrictgroup / .addcmd / etc.
 //
 // Supports dynamic management via owner commands (.addcmd, .removecmd, etc.)
 // Changes are persisted to $HERMES_HOME/restricted_groups.json
@@ -13,7 +16,53 @@ const path = require('path')
 const HERMES_HOME = process.env.HERMES_HOME || '/opt/data'
 const PERSIST_PATH = path.join(HERMES_HOME, 'restricted_groups.json')
 
-// ─── GLOBAL ENABLED COMMANDS (for all users in private chat) ──────────
+// Commands every restricted group must keep available for group UX
+const BASE_PUBLIC_COMMANDS = [
+  'menu', 'help', 'start',
+  'ping', 'botinfo', 'owner',
+  'listcmd',
+]
+
+// Owner-only management — always allowed in restricted groups (cannot be stripped)
+const OWNER_MGMT_COMMANDS = [
+  'restrictgroup', 'unrestrictgroup',
+  'addcmd', 'removecmd', 'listcmd',
+  'addcmdall', 'removecmdall',
+  'enablecmd', 'disablecmd',
+  // menu management (global hide/show) — must stay reachable for owner
+  'addcmdglobal', 'delcmdglobal', 'editcmddesc',
+  'addsection', 'delsection', 'listmenucustom',
+  'setmenu', 'hidemenu', 'showmenu',
+]
+
+function normalizeCmd(command) {
+  return (command || '').toLowerCase().replace(/^\./, '').trim()
+}
+
+function uniqueCmds(list) {
+  const seen = new Set()
+  const out = []
+  for (const raw of list || []) {
+    const c = normalizeCmd(raw)
+    if (!c || seen.has(c)) continue
+    seen.add(c)
+    out.push(c)
+  }
+  return out
+}
+
+function defaultAllowlist() {
+  return uniqueCmds([...BASE_PUBLIC_COMMANDS, ...OWNER_MGMT_COMMANDS])
+}
+
+function ensureOwnerMgmtInList(cmds) {
+  const set = new Set(uniqueCmds(cmds))
+  for (const c of OWNER_MGMT_COMMANDS) set.add(c)
+  for (const c of BASE_PUBLIC_COMMANDS) set.add(c)
+  return [...set]
+}
+
+// ─── GLOBAL ENABLED COMMANDS (for all users in private chat menu) ──────────
 // Commands that appear in menu for ALL users.
 // Owner can add/remove via .enablecmd / .disablecmd
 let GLOBAL_ENABLED_COMMANDS = ['sticker', 'toimg']  // sticker always visible by default
@@ -47,7 +96,7 @@ function getGlobalEnabledCommands() {
 }
 
 function enableCommand(command) {
-  const cmd = (command || '').toLowerCase().replace(/^\./, '')
+  const cmd = normalizeCmd(command)
   if (!cmd) return { ok: false, reason: 'Command kosong' }
   if (GLOBAL_ENABLED_COMMANDS.includes(cmd)) return { ok: false, reason: `.${cmd} sudah aktif` }
   GLOBAL_ENABLED_COMMANDS.push(cmd)
@@ -56,7 +105,7 @@ function enableCommand(command) {
 }
 
 function disableCommand(command) {
-  const cmd = (command || '').toLowerCase().replace(/^\./, '')
+  const cmd = normalizeCmd(command)
   if (!cmd) return { ok: false, reason: 'Command kosong' }
   const idx = GLOBAL_ENABLED_COMMANDS.indexOf(cmd)
   if (idx === -1) return { ok: false, reason: `.${cmd} tidak ada di daftar aktif` }
@@ -65,11 +114,9 @@ function disableCommand(command) {
   return { ok: true, cmd }
 }
 
-// Default restricted groups (hardcoded fallback)
+// Default restricted groups (hardcoded fallback) — always include owner mgmt
 const DEFAULT_RESTRICTED_GROUPS = {
-  '120363405661184579@g.us': [
-    'menu', 'help', 'start',
-    'ping', 'botinfo', 'owner',
+  '120363405661184579@g.us': defaultAllowlist().concat([
     'ai', 'reset',
     'search',
     'forget',
@@ -80,28 +127,34 @@ const DEFAULT_RESTRICTED_GROUPS = {
     'models',
     'setapikey',
     'setbaseurl',
-    'setapikey', 'setbaseurl', 'mykeys',
+    'mykeys',
     'myconfig',
-    'listcmd',
-    'addcmd', 'removecmd', 'addcmdall', 'removecmdall',
-    'restrictgroup', 'unrestrictgroup',
-    'enablecmd', 'disablecmd',
-  ],
+  ]),
 }
 
 // Runtime state (merged defaults + persisted)
-let RESTRICTED_GROUPS = { ...DEFAULT_RESTRICTED_GROUPS }
+let RESTRICTED_GROUPS = {}
+for (const [jid, cmds] of Object.entries(DEFAULT_RESTRICTED_GROUPS)) {
+  RESTRICTED_GROUPS[jid] = ensureOwnerMgmtInList(cmds)
+}
 
 // ─── PERSISTENCE ─────────────────────────────────────────────
 function loadPersisted() {
   try {
     if (!fs.existsSync(PERSIST_PATH)) return
     const data = JSON.parse(fs.readFileSync(PERSIST_PATH, 'utf8'))
-    // Merge: persisted overrides defaults
+    let repaired = false
+    // Merge: persisted overrides defaults; always re-inject owner mgmt
     for (const [jid, cmds] of Object.entries(data)) {
-      RESTRICTED_GROUPS[jid] = cmds
+      const fixed = ensureOwnerMgmtInList(cmds)
+      if (JSON.stringify(uniqueCmds(cmds)) !== JSON.stringify(fixed)) repaired = true
+      RESTRICTED_GROUPS[jid] = fixed
     }
     console.log(`[RESTRICTIONS] Loaded ${Object.keys(data).length} persisted group(s) from ${PERSIST_PATH}`)
+    if (repaired) {
+      console.log('[RESTRICTIONS] Repaired missing owner/base commands in allowlists')
+      savePersisted()
+    }
   } catch (e) {
     console.error('[RESTRICTIONS] load error:', e.message)
   }
@@ -109,7 +162,6 @@ function loadPersisted() {
 
 function savePersisted() {
   try {
-    // Save only non-default groups (or groups that were modified)
     fs.mkdirSync(path.dirname(PERSIST_PATH), { recursive: true })
     fs.writeFileSync(PERSIST_PATH, JSON.stringify(RESTRICTED_GROUPS, null, 2))
     console.log('[RESTRICTIONS] Saved to', PERSIST_PATH)
@@ -127,11 +179,18 @@ function isRestrictedGroup(jid) {
   return Object.prototype.hasOwnProperty.call(RESTRICTED_GROUPS, jid)
 }
 
+function isOwnerMgmtCommand(command) {
+  return OWNER_MGMT_COMMANDS.includes(normalizeCmd(command))
+}
+
 function isCommandAllowed(jid, command) {
+  const cmd = normalizeCmd(command)
+  // Owner management always allowed even if somehow missing from allowlist
+  if (isOwnerMgmtCommand(cmd)) return true
   if (!isRestrictedGroup(jid)) return true  // not restricted = all allowed
   const allowed = RESTRICTED_GROUPS[jid]
   if (!allowed) return true
-  return allowed.includes((command || '').toLowerCase())
+  return allowed.includes(cmd)
 }
 
 function getAllowedCommands(jid) {
@@ -147,7 +206,8 @@ function listRestrictedGroups() {
 function restrictGroup(jid) {
   if (!jid) return false
   if (isRestrictedGroup(jid)) return false // already restricted
-  RESTRICTED_GROUPS[jid] = ['menu', 'help', 'start', 'ping', 'botinfo', 'owner']
+  // Seed with public UX + owner management so .unrestrictgroup never dies
+  RESTRICTED_GROUPS[jid] = defaultAllowlist()
   savePersisted()
   return true
 }
@@ -162,7 +222,8 @@ function unrestrictGroup(jid) {
 function addCommand(jid, command) {
   if (!jid || !command) return { ok: false, reason: 'JID atau command kosong' }
   if (!isRestrictedGroup(jid)) return { ok: false, reason: 'Grup ini tidak terfilter. Gunakan .restrictgroup dulu.' }
-  const cmd = command.toLowerCase().replace(/^\./, '') // strip leading dot
+  const cmd = normalizeCmd(command)
+  if (!cmd) return { ok: false, reason: 'Command kosong' }
   const cmds = RESTRICTED_GROUPS[jid]
   if (cmds.includes(cmd)) return { ok: false, reason: `Command .${cmd} sudah ada di grup ini.` }
   cmds.push(cmd)
@@ -171,7 +232,7 @@ function addCommand(jid, command) {
 }
 
 function addCommandAll(command) {
-  const cmd = (command || '').toLowerCase().replace(/^\./, '')
+  const cmd = normalizeCmd(command)
   if (!cmd) return { ok: false, reason: 'Command kosong' }
   let count = 0
   for (const jid of Object.keys(RESTRICTED_GROUPS)) {
@@ -185,8 +246,14 @@ function addCommandAll(command) {
 }
 
 function removeCommandAll(command) {
-  const cmd = (command || '').toLowerCase().replace(/^\./, '')
+  const cmd = normalizeCmd(command)
   if (!cmd) return { ok: false, reason: 'Command kosong' }
+  if (isOwnerMgmtCommand(cmd) || BASE_PUBLIC_COMMANDS.includes(cmd)) {
+    return {
+      ok: false,
+      reason: `Command .${cmd} dilindungi (owner/base). Tidak bisa dihapus dari allowlist grup.`,
+    }
+  }
   let count = 0
   for (const jid of Object.keys(RESTRICTED_GROUPS)) {
     const idx = RESTRICTED_GROUPS[jid].indexOf(cmd)
@@ -202,7 +269,13 @@ function removeCommandAll(command) {
 function removeCommand(jid, command) {
   if (!jid || !command) return { ok: false, reason: 'JID atau command kosong' }
   if (!isRestrictedGroup(jid)) return { ok: false, reason: 'Grup ini tidak terfilter.' }
-  const cmd = command.toLowerCase().replace(/^\./, '')
+  const cmd = normalizeCmd(command)
+  if (isOwnerMgmtCommand(cmd) || BASE_PUBLIC_COMMANDS.includes(cmd)) {
+    return {
+      ok: false,
+      reason: `Command .${cmd} dilindungi (owner/base). Tidak bisa dihapus dari allowlist grup.`,
+    }
+  }
   const cmds = RESTRICTED_GROUPS[jid]
   const idx = cmds.indexOf(cmd)
   if (idx === -1) return { ok: false, reason: `Command .${cmd} tidak ada di grup ini.` }
@@ -213,8 +286,11 @@ function removeCommand(jid, command) {
 
 module.exports = {
   RESTRICTED_GROUPS,
+  BASE_PUBLIC_COMMANDS,
+  OWNER_MGMT_COMMANDS,
   isRestrictedGroup,
   isCommandAllowed,
+  isOwnerMgmtCommand,
   getAllowedCommands,
   listRestrictedGroups,
   restrictGroup,

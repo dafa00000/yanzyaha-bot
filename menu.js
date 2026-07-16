@@ -11,7 +11,75 @@
  */
 
 import restrictions from './restrictions.cjs'
-const { isRestrictedGroup, getAllowedCommands, getGlobalEnabledCommands } = restrictions
+const { isRestrictedGroup, getAllowedCommands, getGlobalEnabledCommands, isOwnerMgmtCommand } = restrictions
+
+function extractCmdNames(cmdStr) {
+  // ".sticker / .s" → ["sticker","s"]
+  // ".ai [tanya]" → ["ai"]
+  // ".addcmd <cmd>" → ["addcmd"]
+  return String(cmdStr || '')
+    .split('/')
+    .map(part => part.trim().replace(/^\./, '').split(/[\s<\[]/)[0].toLowerCase())
+    .filter(Boolean)
+}
+
+/**
+ * Restricted-group menu: only show commands that are in the allowlist.
+ * When owner .addcmd / .removecmd, menu updates automatically on next .menu.
+ */
+function buildRestrictedSections(jid) {
+  const allowed = new Set((getAllowedCommands(jid) || []).map(c => String(c).toLowerCase()))
+  const result = []
+  const shown = new Set()
+
+  // Prefer well-known section order, then remaining SECTIONS
+  const orderedKeys = [
+    ...RESTRICTED_SECTIONS,
+    ...Object.keys(SECTIONS).filter(k => !RESTRICTED_SECTIONS.includes(k)),
+  ]
+  const seenKey = new Set()
+
+  for (const key of orderedKeys) {
+    if (seenKey.has(key)) continue
+    seenKey.add(key)
+    const section = SECTIONS[key]
+    if (!section || section.ownerOnly) continue
+
+    const keptCmds = []
+    for (const it of section.items || []) {
+      if (it.type !== 'cmd') continue
+      const names = extractCmdNames(it.cmd)
+      if (names.some(n => allowed.has(n))) {
+        keptCmds.push(it)
+        names.forEach(n => shown.add(n))
+      }
+    }
+    if (keptCmds.length === 0) continue
+    const infos = (section.items || []).filter(it => it.type === 'info')
+    result.push({ title: section.title, items: [...keptCmds, ...infos] })
+  }
+
+  // Commands allowed but not represented in any static section → extra list
+  const orphans = [...allowed].filter(c => {
+    if (shown.has(c)) return false
+    if (typeof isOwnerMgmtCommand === 'function' && isOwnerMgmtCommand(c)) return false
+    // meta cmds usually not listed as user features
+    if (['menu', 'help', 'start', 'listcmd'].includes(c)) return false
+    return true
+  })
+  if (orphans.length > 0) {
+    result.push({
+      title: '✅ COMMAND AKTIF',
+      items: orphans.sort().map(c => ({
+        type: 'cmd',
+        cmd: '.' + c,
+        desc: 'Diizinkan di grup ini',
+      })),
+    })
+  }
+
+  return result
+}
 
 // ─── SECTION DEFINITIONS ────────────────────────────────────────
 // Setiap section punya title + items array.
@@ -560,10 +628,13 @@ function getSectionsForContext(ctx) {
   // Build dynamic section from owner-enabled commands
   const enabledSection = buildEnabledSection()
 
-  // Restricted group: cuma section yang di-whitelist + enabled
+  // Restricted group: cuma command di allowlist (auto-update pas .addcmd/.removecmd)
   if (isRestricted) {
-    const sections = RESTRICTED_SECTIONS.map(k => SECTIONS[k]).filter(Boolean)
-    if (enabledSection) sections.push(enabledSection)
+    const sections = buildRestrictedSections(jid)
+    // Owner di restricted group tetap liat management filter
+    if (isOwner) {
+      if (OWNER_EXTRA_SECTIONS.ownerGroupMgmt) sections.push(OWNER_EXTRA_SECTIONS.ownerGroupMgmt)
+    }
     return sections
   }
 
@@ -585,7 +656,7 @@ function getSectionsForContext(ctx) {
     result.push(OWNER_EXTRA_SECTIONS.ownerDownload)
     result.push(OWNER_EXTRA_SECTIONS.ownerPasar)
     result.push(OWNER_EXTRA_SECTIONS.ownerSosmed)
-    result.push(OWNER_EXTRA_SECTIONS.ownerWhale)
+    // whale tracker disabled — intentionally not pushed
     result.push(OWNER_EXTRA_SECTIONS.ownerML)
     result.push(OWNER_EXTRA_SECTIONS.ownerGame)
     result.push(OWNER_EXTRA_SECTIONS.ownerMenfess)
@@ -677,17 +748,11 @@ export async function getMenuText(msg = null, opts = {}) {
 }
 
 function countAllowedItems(ctx) {
-  // Count sections × items yang visible di restricted group
-  const allowed = new Set(getAllowedCommands(ctx.jid) || [])
+  // Count visible cmd items after allowlist filter
   let count = 0
-  for (const section of RESTRICTED_SECTIONS.map(k => SECTIONS[k]).filter(Boolean)) {
-    for (const it of section.items) {
-      if (it.type === 'cmd') {
-        const cmd = it.cmd.split(/\s/)[0].replace(/^\./, '')  // ".search" -> "search"
-        if (allowed.has(cmd)) count++
-      } else if (it.type === 'info') {
-        count++  // info lines counted
-      }
+  for (const section of buildRestrictedSections(ctx.jid)) {
+    for (const it of section.items || []) {
+      if (it.type === 'cmd') count++
     }
   }
   return count

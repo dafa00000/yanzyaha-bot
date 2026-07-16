@@ -123,7 +123,9 @@ await test('restricted: only shows allowed sections', async () => {
   notHas(out, 'MARKET')
   notHas(out, 'SOSMED')
   notHas(out, 'GAME')
-  has(out, 'PERSONAL CONFIG') // Now shown in restricted groups
+  // download cmds not in default allowlist → section hidden
+  notHas(out, 'DOWNLOAD')
+  has(out, 'PERSONAL CONFIG') // models/setmodel etc di allowlist
 })
 
 await test('restricted: only shows allowed AI commands', async () => {

@@ -111,15 +111,15 @@ await test('menu private: full menu', async () => {
   ok(out.includes('PERSONAL CONFIG'))
 })
 
-await test('menu restricted group: filtered (4 sections)', async () => {
+await test('menu restricted group: filtered by allowlist', async () => {
   const out = await menu.getMenuText({
     key: { remoteJid: '120363405661184579@g.us', participant: '628xxx@s.whatsapp.net' }
   })
-  // 4 sections visible: INFO, AI, SEARCH, DOWNLOAD, PERSONAL CONFIG
   ok(out.includes('INFO'))
   ok(out.includes('AI CHAT'))
-  ok(out.includes('DOWNLOAD'))
-  ok(out.includes('PERSONAL CONFIG')) // Now shown in restricted groups
+  ok(out.includes('PERSONAL CONFIG')) // models/setmodel etc di allowlist
+  // download cmds not in default allowlist
+  ok(!out.includes('DOWNLOAD'))
   // Sections NOT visible
   ok(!out.includes('MARKET'))
   ok(!out.includes('SOSMED'))

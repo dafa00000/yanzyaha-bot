@@ -281,13 +281,29 @@ const USERS_FILE = path.join(process.env.HERMES_HOME || process.cwd(), 'users.js
 function loadUsers() {
   try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch { return {}; }
 }
-function saveUser(lid, nomor) {
+function saveUser(senderJid, _ignoredNomor) {
   const users = loadUsers();
-  const clean = lid.replace(/@(lid|s\.whatsapp\.net)$/, '');
-  if (!users[clean]) {
-    users[clean] = { lid: clean, nomor: nomor || '', firstSeen: new Date().toISOString() };
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  const raw = String(senderJid || '')
+  const isLid = /@lid$/i.test(raw)
+  const isPn = /@s\.whatsapp\.net$/i.test(raw)
+  const clean = raw.replace(/@(lid|s\.whatsapp\.net)$/i, '').split(':')[0]
+  if (!clean) return
+  const prev = users[clean] || {}
+  const jidType = isLid ? 'lid' : (isPn ? 's.whatsapp.net' : (prev.jidType || 's.whatsapp.net'))
+  const phone = (!isLid && /^\d{8,15}$/.test(clean)) ? clean : (prev.nomor || '')
+  const next = {
+    ...prev,
+    lid: clean,
+    jidType,
+    fullJid: `${clean}@${jidType}`,
+    // Keep real phone when known; never overwrite phone with LID digits
+    nomor: phone || prev.nomor || '',
+    firstSeen: prev.firstSeen || new Date().toISOString(),
+    lastSeen: new Date().toISOString(),
   }
+  // Always refresh jid metadata (not only first-seen) so broadcast stays correct
+  users[clean] = next
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2))
 }
 function findLidByNomor(nomor) {
   const users = loadUsers();
@@ -462,9 +478,15 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     const command = args[0]?.toLowerCase()
     const text = args.slice(1).join(' ')
 
+    // Owner identity (used for restrict bypass + hiddenCmd bypass for management)
+    const senderNumForAcl = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
+    const isOwnerSender = OWNER_LIDS.includes(senderNumForAcl)
+
     // Group restriction check: silently ignore blocked commands in restricted groups.
-    if (isGroup && command && !isCommandAllowed(from, command)) {
-      return  // silent ignore
+    // Owner ALWAYS bypasses so .unrestrictgroup / .addcmd never soft-lock the group.
+    // Owner-mgmt commands also always pass isCommandAllowed (defense in depth).
+    if (isGroup && command && !isOwnerSender && !isCommandAllowed(from, command)) {
+      return  // silent ignore for non-owner
     }
 
     // Log: distinguish group vs private + show full JID (not just numeric prefix)
@@ -475,21 +497,17 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     console.log(`📩 [${jidType}] ${fromDisplay}: ${body}`)
 
     try {
-      // Cek apakah command di-disable global via menu management
+      // Global hide via menu management (.delcmdglobal → hiddenCmds).
+      // Owner bypasses so they can re-enable without soft-lockout.
       const customData = loadCustomMenu()
       const hiddenSet = new Set(customData.hiddenCmds || [])
       const cmdName = command.replace(/^\./, '')
-      if (hiddenSet.has(cmdName)) {
+      if (hiddenSet.has(cmdName) && !isOwnerSender) {
         await sendText('🚫 *Command ini sedang dinonaktifkan oleh owner.*')
         return
       }
 
-      // Cek konfirmasi buy dari whale tracker (beli/skip)
-      const isOwnerJid = OWNER_LIDS.includes((sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0])
-      if (isOwnerJid && !command) {
-        const handled = await whaleHandler.handleBuyConfirmation(sock, msg, body, sender, true, sendText)
-        if (handled) return
-      }
+      // Whale buy-confirmation disabled together with whale tracker
 
       switch (command) {
         case 'menu':
@@ -681,6 +699,8 @@ case 'tomp3':
           await handleTA(sock, msg, text)
           break
         case 'crypto':
+        case 'cryptotop':
+        case 'cryptoprediksi':
           await handleCrypto(sock, msg, text, command)
           break
         case 'game':
@@ -1066,6 +1086,7 @@ case 'tomp3':
           await handleWeather(sock, msg, text, WEATHER_API_KEY)
           break
         case 'menfess':
+        case 'menfessp':
           await handleMenfess(sock, msg, text, command)
           break
         case 'update':
@@ -1119,7 +1140,8 @@ case 'tomp3':
           break
         }
 
-        // .forget — hapus memory (group atau private)
+        // .reset / .forget — hapus memory (group atau private)
+        case 'reset':
         case 'forget': {
           if (isGroup && bridge) {
             await bridge.handleGroupReset(from)
@@ -1172,8 +1194,9 @@ case 'tomp3':
           }
           restrictGroup(from)
           await sendText(
-            '✅ *Grup ini sekarang terfilter!*)\n\n' +
-            'Hanya command yang diizinkan yang bisa dipake.\n' +
+            '✅ *Grup ini sekarang terfilter!*\n\n' +
+            'Hanya command yang diizinkan yang bisa dipake (non-owner).\n' +
+            'Owner tetap bisa pakai semua command manage.\n' +
             '• `.addcmd <cmd>` — tambah command\n' +
             '• `.removecmd <cmd>` — hapus command\n' +
             '• `.listcmd` — liat daftar command\n' +
@@ -1478,14 +1501,9 @@ case 'tomp3':
           break
         }
 
-        // ─── WHALE TRACKER (Owner Only) ─────────────
+        // ─── WHALE TRACKER — DISABLED ─────────────
         case 'whale': {
-          const wSenderNum = (sender || '').replace(/@(lid|s\.whatsapp\.net)$/, '').split(':')[0]
-          if (!OWNER_LIDS.includes(wSenderNum)) {
-            await sendText('🔒 *Command ini khusus owner.*')
-            break
-          }
-          await whaleHandler.handleWhaleCommand(sock, msg, body, sender, true, sendText)
+          await sendText('🐋 Fitur *whale tracker* sedang dinonaktifkan.')
           break
         }
 
