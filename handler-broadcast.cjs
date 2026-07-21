@@ -55,15 +55,40 @@ function saveGroup(jid) {
   }
 }
 
+function isLikelyPhone(n) {
+  const s = String(n || '').replace(/[^0-9]/g, '')
+  // Common WA phone: country code + national number, typically 10–15 digits.
+  if (s.length < 10 || s.length > 15) return false
+  if (/^62[2-9]\d{7,12}$/.test(s)) return true
+  if (/^1\d{10}$/.test(s)) return true
+  if (/^(60|65|61|81|44|91)\d{8,12}$/.test(s)) return true
+  return false
+}
+
+/** Filter non-user / system JIDs that must never be broadcast targets */
+function isJunkJid(jid) {
+  const j = String(jid || '').toLowerCase()
+  if (!j) return true
+  if (j.includes('status@broadcast')) return true
+  if (j.includes('@broadcast')) return true
+  if (j.endsWith('@newsletter')) return true
+  if (j.endsWith('@g.us')) return false // groups OK when intentionally added
+  if (j.includes('server') || j === '0@s.whatsapp.net') return true
+  // bare garbage like "status@broadcast@s.whatsapp.net"
+  const userPart = j.split('@')[0] || ''
+  if (!/^\d+$/.test(userPart)) return true
+  return false
+}
+
 /**
  * Resolve a stored user record into a sendable WhatsApp JID.
- * Critical fix: LID users must use @lid, phone users use @s.whatsapp.net.
- * Old code always used @s.whatsapp.net → broadcast "succeeds" count but never delivers.
+ * Critical: LID users must use @lid, phone users use @s.whatsapp.net.
  */
 function resolveUserJid(user) {
   if (!user || typeof user !== 'object') return null
 
   if (user.fullJid && /@(lid|s\.whatsapp\.net)$/i.test(user.fullJid)) {
+    if (isJunkJid(user.fullJid)) return null
     return user.fullJid
   }
 
@@ -71,20 +96,23 @@ function resolveUserJid(user) {
   const id = String(user.lid || user.id || '').replace(/@(lid|s\.whatsapp\.net)$/i, '').split(':')[0]
   const nomor = String(user.nomor || '').replace(/[^0-9]/g, '')
 
-  if (jidType === 'lid' && id) return `${id}@lid`
-  if (jidType === 's.whatsapp.net' && id) return `${id}@s.whatsapp.net`
+  if (id && !/^\d+$/.test(id)) return null
+
+  if (jidType === 'lid' && id) {
+    const j = `${id}@lid`
+    return isJunkJid(j) ? null : j
+  }
+  if (jidType === 's.whatsapp.net' && id) {
+    const j = `${id}@s.whatsapp.net`
+    return isJunkJid(j) ? null : j
+  }
 
   // Prefer a *distinct* real phone number when available
   if (nomor && nomor !== id && isLikelyPhone(nomor)) {
     return `${nomor}@s.whatsapp.net`
   }
   if (nomor && isLikelyPhone(nomor) && jidType !== 'lid') {
-    // Only trust nomor==id if it clearly looks like a phone (country 62…), not a raw LID
-    if (nomor === id && !isLikelyPhone(id)) {
-      // fall through
-    } else if (isLikelyPhone(nomor)) {
-      return `${nomor}@s.whatsapp.net`
-    }
+    return `${nomor}@s.whatsapp.net`
   }
 
   if (!id) return null
@@ -93,25 +121,60 @@ function resolveUserJid(user) {
   return null
 }
 
-function isLikelyPhone(n) {
-  const s = String(n || '').replace(/[^0-9]/g, '')
-  // Common WA phone: country code + national number, typically 10–15 digits.
-  // Bias to real country codes used by this bot's audience; avoid treating long LIDs as phones.
-  if (s.length < 10 || s.length > 15) return false
-  // Indonesian mobile: 62 + 8… (total ~11–14)
-  if (/^62[2-9]\d{7,12}$/.test(s)) return true
-  // Other common: US/CA 1 + 10 digits exactly 11
-  if (/^1\d{10}$/.test(s)) return true
-  if (/^(60|65|61|81|44|91)\d{8,12}$/.test(s)) return true
-  return false
-}
-
 function isBannedUser(user, banned) {
   const candidates = [user.lid, user.nomor, user.fullJid].filter(Boolean).map(String)
   return banned.some(b => {
     const bb = String(b).replace(/@(lid|s\.whatsapp\.net)$/i, '')
     return candidates.some(c => String(c).replace(/@(lid|s\.whatsapp\.net)$/i, '') === bb || String(c).includes(bb))
   })
+}
+
+/**
+ * Prefer mapped phone JID when Baileys lidMapping knows it (more reliable delivery),
+ * else keep original @lid. Never call onWhatsApp with LID — Baileys rejects that.
+ */
+async function preferSendableJid(sock, jid) {
+  if (!jid || isJunkJid(jid)) return null
+  if (jid.endsWith('@g.us')) return jid
+
+  if (jid.endsWith('@lid')) {
+    try {
+      const getPN = sock?.signalRepository?.lidMapping?.getPNForLID?.bind(sock.signalRepository.lidMapping)
+      if (getPN) {
+        const pn = await getPN(jid)
+        if (pn && /@s\.whatsapp\.net$/i.test(pn) && !isJunkJid(pn)) {
+          return pn
+        }
+      }
+    } catch (e) {
+      console.log(`[BROADCAST] getPNForLID fail ${jid}:`, e.message)
+    }
+    // Send directly to @lid — this is valid in modern Baileys
+    return jid
+  }
+
+  // Phone JID: optional existence check (only phones work with onWhatsApp)
+  if (jid.endsWith('@s.whatsapp.net')) {
+    const num = jid.replace(/@s\.whatsapp\.net$/i, '')
+    if (!isLikelyPhone(num)) return null
+    try {
+      const check = await sock.onWhatsApp(num)
+      if (Array.isArray(check) && check.length > 0) {
+        const hit = check.find(c => c && c.exists)
+        if (hit?.jid) return hit.jid
+        if (!hit) {
+          console.log(`[BROADCAST] Skipping non-WA phone: ${jid}`)
+          return null
+        }
+      }
+    } catch (e) {
+      console.log(`[BROADCAST] onWhatsApp check failed for ${jid}:`, e.message)
+      // fail-open for phones if API blips
+    }
+    return jid
+  }
+
+  return null
 }
 
 /**
@@ -159,21 +222,32 @@ async function handleBroadcast(sock, msg, text, sender, body) {
 
   if (isPrivateOnly || isAll) {
     let skippedNoJid = 0
+    let skippedJunk = 0
+    let skippedBanned = 0
+    let skippedVerify = 0
+
     for (const user of users) {
-      if (isBannedUser(user, banned)) continue
+      if (isBannedUser(user, banned)) { skippedBanned++; continue }
       const userJid = resolveUserJid(user)
       if (!userJid) { skippedNoJid++; continue }
-      if (seen.has(userJid)) continue
-      seen.add(userJid)
-      targets.push({ jid: userJid, type: 'private' })
+      if (isJunkJid(userJid) || userJid.endsWith('@g.us')) { skippedJunk++; continue }
+
+      const sendJid = await preferSendableJid(sock, userJid)
+      if (!sendJid) { skippedVerify++; continue }
+      if (seen.has(sendJid)) continue
+      seen.add(sendJid)
+      targets.push({ jid: sendJid, type: 'private', source: userJid })
     }
-    if (skippedNoJid > 0) {
-      console.log(`[BROADCAST] skipped ${skippedNoJid} users without resolvable JID`)
-    }
+
+    console.log(
+      `[BROADCAST] private resolve: ok=${targets.filter(t => t.type === 'private').length}` +
+      ` noJid=${skippedNoJid} junk=${skippedJunk} banned=${skippedBanned} verifyFail=${skippedVerify}`
+    )
   }
 
   if (isGroupOnly || isAll) {
     for (const gJid of groups) {
+      if (!gJid || !String(gJid).endsWith('@g.us')) continue
       if (seen.has(gJid)) continue
       seen.add(gJid)
       targets.push({ jid: gJid, type: 'group' })
@@ -185,9 +259,10 @@ async function handleBroadcast(sock, msg, text, sender, body) {
     return true
   }
 
-  // Sample first few targets for owner diagnostics
-  const sample = targets.slice(0, 3).map(t => t.jid).join(', ')
-  const targetLabel = isPrivateOnly ? 'user private' : isGroupOnly ? 'grup' : 'user + grup'
+  const sample = targets.slice(0, 5).map(t => t.jid).join(', ')
+  const nPrivate = targets.filter(t => t.type === 'private').length
+  const nGroup = targets.filter(t => t.type === 'group').length
+  const targetLabel = isPrivateOnly ? 'user private' : isGroupOnly ? 'grup' : `user (${nPrivate}) + grup (${nGroup})`
   await reply(
     `📢 Mengirim broadcast ke *${targets.length}* ${targetLabel}...\n` +
     `Sample JID: ${sample}\n\n` +
@@ -270,7 +345,7 @@ async function handleBroadcast(sock, msg, text, sender, body) {
     report += errors.map(e => `• ${e}`).join('\n')
   }
   if (success === 0 && failed > 0) {
-    report += `\n\n💡 Tip: user lama mungkin cuma punya LID. Biar broadcast akurat, minta user chat bot sekali lagi (biar JID ke-update).`
+    report += `\n\n💡 Tip: kalau socket reconnect mid-broadcast, coba lagi saat bot stabil. User lama tanpa chat ulang juga bisa gagal session.`
   }
 
   await reply(report)
@@ -283,3 +358,5 @@ module.exports.loadGroups = loadGroups
 module.exports.loadBanned = loadBanned
 module.exports.saveGroup = saveGroup
 module.exports.resolveUserJid = resolveUserJid
+module.exports.isJunkJid = isJunkJid
+module.exports.isLikelyPhone = isLikelyPhone

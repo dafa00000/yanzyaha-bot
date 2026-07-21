@@ -22,7 +22,7 @@ const memoryModule = (() => { try { return require('./memory.cjs') } catch (_) {
 const bridge = (() => { try { return require('./handler-hermes-bridge.cjs') } catch (_) { return null } })()
 const sec = (() => { try { return require('./security.cjs') } catch (_) { return null } })()
 import { handleSearch } from './handler-search.js'
-import { handleMenfess } from './handler-menfess.js'
+import { handleMenfess, handleMenfessAdmin } from './handler-menfess.js'
 import { handleCrypto } from './handler-crypto.js'
 import { handleAutoClip } from './handler-autoclip.js'
 import {
@@ -207,39 +207,33 @@ async function startBot() {
 
     // ─── Retry logic with increasing backoff ──────────────────
     const MAX_RETRIES = 3
-    let pairingCode = null
+      let pairingCode = null
+      let attempt = 0
 
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      const delay = attempt === 1 ? 2000 : (attempt - 1) * 5000  // 2s, 5s, 10s
-      console.log(`📋 Attempt ${attempt}/${MAX_RETRIES}: menunggu ${delay / 1000}s...`)
-      await new Promise(r => setTimeout(r, delay))
+      // Infinite retry loop for pairing code — keeps trying until success
+      while (true) {
+        attempt++
+        const delay = attempt === 1 ? 2000 : Math.min((attempt - 1) * 5000, 30000) // 2s, 5s, 10s, 15s... max 30s
+        console.log(`📋 Attempt ${attempt}: menunggu ${delay / 1000}s...`)
+        await new Promise(r => setTimeout(r, delay))
 
-      try {
-        pairingCode = await sock.requestPairingCode(nomor)
-        console.log(`\n╔══════════════════════════╗`)
-        console.log(`║  🔑 KODE PAIRING: ${pairingCode}  ║`)
-        console.log(`╚══════════════════════════╝`)
-        console.log('\n1. Buka WhatsApp')
-        console.log('2. Titik 3 → Perangkat Tertaut')
-        console.log('3. Tautkan dengan Nomor Telepon')
-        console.log('4. Masukkan kode di atas\n')
-        break  // success, exit retry loop
-      } catch (e) {
-        console.error(`❌ Attempt ${attempt} gagal: ${e?.message || e}`)
-        if (e?.stack) console.error('   Stack:', e.stack.split('\n').slice(0, 3).join('\n'))
-
-        if (attempt < MAX_RETRIES) {
+        try {
+          pairingCode = await sock.requestPairingCode(nomor)
+          console.log(`\n╔══════════════════════════╗`)
+          console.log(`║  🔑 KODE PAIRING: ${pairingCode}  ║`)
+          console.log(`╚══════════════════════════╝`)
+          console.log('\n1. Buka WhatsApp')
+          console.log('2. Titik 3 → Perangkat Tertaut')
+          console.log('3. Tautkan dengan Nomor Telepon')
+          console.log('4. Masukkan kode di atas\n')
+          break  // success, exit retry loop
+        } catch (e) {
+          console.error(`❌ Attempt ${attempt} gagal: ${e?.message || e}`)
+          if (e?.stack) console.error('   Stack:', e.stack.split('\n').slice(0, 3).join('\n'))
           console.log(`   ↳ Retry dalam 5 detik...\n`)
           await new Promise(r => setTimeout(r, 5000))
-        } else {
-          console.error('\n❌ Gagal minta kode pairing setelah', MAX_RETRIES, 'percobaan.')
-          console.error('   Kemungkinan: socket belum connect, nomor salah, atau rate limit.')
-          console.error('   Coba restart bot. Pastikan nomor benar:', nomor)
-          // Don't exit — let connection.update handler deal with reconnect.
-          // The user can fix PHONE_NUMBER and restart.
         }
       }
-    }
   }
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
@@ -284,10 +278,17 @@ function loadUsers() {
 function saveUser(senderJid, _ignoredNomor) {
   const users = loadUsers();
   const raw = String(senderJid || '')
+  // Skip system / non-user JIDs (status broadcast, groups, newsletters, garbage)
+  if (!raw) return
+  if (/@g\.us$/i.test(raw)) return
+  if (/@newsletter$/i.test(raw)) return
+  if (/status@broadcast/i.test(raw)) return
+  if (/@broadcast/i.test(raw)) return
   const isLid = /@lid$/i.test(raw)
   const isPn = /@s\.whatsapp\.net$/i.test(raw)
+  if (!isLid && !isPn) return
   const clean = raw.replace(/@(lid|s\.whatsapp\.net)$/i, '').split(':')[0]
-  if (!clean) return
+  if (!clean || !/^\d+$/.test(clean)) return
   const prev = users[clean] || {}
   const jidType = isLid ? 'lid' : (isPn ? 's.whatsapp.net' : (prev.jidType || 's.whatsapp.net'))
   const phone = (!isLid && /^\d{8,15}$/.test(clean)) ? clean : (prev.nomor || '')
@@ -304,6 +305,30 @@ function saveUser(senderJid, _ignoredNomor) {
   // Always refresh jid metadata (not only first-seen) so broadcast stays correct
   users[clean] = next
   fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2))
+  return next
+}
+
+/** Best-effort: fill nomor for @lid users via Baileys lidMapping (async, non-blocking) */
+async function enrichUserPhoneFromLid(sock, senderJid) {
+  try {
+    if (!senderJid || !/@lid$/i.test(senderJid)) return
+    const clean = String(senderJid).replace(/@lid$/i, '').split(':')[0]
+    if (!clean) return
+    const users = loadUsers()
+    const prev = users[clean]
+    if (!prev || prev.nomor) return
+    const getPN = sock?.signalRepository?.lidMapping?.getPNForLID?.bind(sock.signalRepository.lidMapping)
+    if (!getPN) return
+    const pn = await getPN(`${clean}@lid`)
+    if (!pn) return
+    const phone = String(pn).replace(/@s\.whatsapp\.net$/i, '').split(':')[0].replace(/[^0-9]/g, '')
+    if (!phone || phone.length < 10) return
+    users[clean] = { ...prev, nomor: phone, lastSeen: new Date().toISOString() }
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2))
+    console.log('[USER] enriched nomor', clean, '→', phone)
+  } catch (e) {
+    // silent — enrichment is optional
+  }
 }
 function findLidByNomor(nomor) {
   const users = loadUsers();
@@ -349,6 +374,8 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
       // Catat user
       const senderNomor = sender ? sender.replace(/@(lid|s\.whatsapp\.net)$/, '') : '';
       saveUser(sender, senderNomor);
+      // Non-blocking: map LID → phone for better menfess/broadcast targeting
+      enrichUserPhoneFromLid(sock, sender).catch(() => {})
 
       // Log group JID (if applicable) — was missing before, caused confusion
       if (isGroup) {
@@ -766,6 +793,19 @@ case 'tomp3':
           await sendText(result.message)
           break
         }
+        case 'resetleaderboard': {
+          if (!isOwner(sender)) { await sendText('❌ Owner only!'); break }
+          const fs = require('fs')
+          const path = require('path')
+          const USERS_FILE = path.join(process.env.HERMES_HOME || '/opt/data', 'economy', 'users.json')
+          try {
+            fs.writeFileSync(USERS_FILE, '{}')
+            await sendText('✅ Leaderboard direset! Semua user dihapus.')
+          } catch (e) {
+            await sendText('❌ Gagal reset: ' + e.message)
+          }
+          break
+        }
         case 'shop': {
           const items = economy.getShop()
           let shopText = '🛒 *SHOP*\n\n'
@@ -1088,6 +1128,16 @@ case 'tomp3':
         case 'menfess':
         case 'menfessp':
           await handleMenfess(sock, msg, text, command)
+          break
+        // ─── MENFESS ADMIN COMMANDS ──────────────────────────────
+        case 'menfesslist':
+        case 'menfessban':
+        case 'menfessunban':
+        case 'menfesscooldown':
+        case 'menfessmaxlen':
+        case 'menfessgroupadd':
+        case 'menfessgrouplist':
+          await handleMenfessAdmin(sock, msg, text, command)
           break
         case 'update':
           await handleUpdate(sock, msg)

@@ -33,6 +33,10 @@ const OWNER_MGMT_COMMANDS = [
   'addcmdglobal', 'delcmdglobal', 'editcmddesc',
   'addsection', 'delsection', 'listmenucustom',
   'setmenu', 'hidemenu', 'showmenu',
+  // menfess admin
+  'menfesslist', 'menfessban', 'menfessunban',
+  'menfesscooldown', 'menfessmaxlen',
+  'menfessgroupadd', 'menfessgrouplist',
 ]
 
 function normalizeCmd(command) {

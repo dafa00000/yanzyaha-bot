@@ -56,6 +56,112 @@ const soalKuis = [
     q: '🦎 Komodo adalah hewan endemik dari?',
     opts: ['A. Bali', 'B. Sulawesi', 'C. Papua', 'D. Pulau Komodo & Flores'],
     ans: 'D', exp: 'Komodo hidup di Pulau Komodo, Flores, dan sekitarnya.'
+  },
+  // --- TAMBAHAN SOAL BARU ---
+  {
+    q: '🌋 Gunung berapi aktif di Pulau Jawa?',
+    opts: ['A. Rinjani', 'B. Merapi', 'C. Kerinci', 'D. Semeru'],
+    ans: 'B', exp: 'Gunung Merapi di batas Yogyakarta & Jawa Tengah adalah gunung berapi paling aktif.'
+  },
+  {
+    q: '💧 Sungai terpanjang di Indonesia?',
+    opts: ['A. Sungai Mahakam', 'B. Sungai Kapuas', 'C. Sungai Barito', 'D. Sungai Musi'],
+    ans: 'B', exp: 'Sungai Kapuas di Kalimantan Barat sepanjang ±1.143 km, terpanjang di Indonesia.'
+  },
+  {
+    q: '🧬 Unsur kimia dengan simbol O adalah?',
+    opts: ['A. Oksigen', 'B. Emas', 'C. Perak', 'D. Tembaga'],
+    ans: 'A', exp: 'O adalah simbol untuk Oksigen (Oxygen).'
+  },
+  {
+    q: '🎭 Tokoh wayang yang dikenal sebagai "Ksatria Pandawa" adalah?',
+    opts: ['A. Werkudara', 'B. Arjuna', 'C. Nakula', 'D. Sahadewa'],
+    ans: 'B', exp: 'Arjuna (Werkudara) adalah salah satu Ksatria Pandawa.'
+  },
+  {
+    q: '🌍 Negara dengan populasi terbesar di dunia?',
+    opts: ['A. India', 'B. Amerika Serikat', 'C. Indonesia', 'D. China'],
+    ans: 'A', exp: 'India saat ini negara dengan populasi terbesar, melebihi China.'
+  },
+  {
+    q: '🏛️ Candi Borobudur terletak di provinsi?',
+    opts: ['A. Jawa Timur', 'B. Jawa Tengah', 'C. DI Yogyakarta', 'D. Jawa Barat'],
+    ans: 'B', exp: 'Candi Borobudur berada di Magelang, Jawa Tengah.'
+  },
+  {
+    q: '💻 Singkatan dari CPU adalah?',
+    opts: ['A. Central Process Unit', 'B. Central Processing Unit', 'C. Computer Personal Unit', 'D. Core Processing Unit'],
+    ans: 'B', exp: 'CPU = Central Processing Unit (Unit Pemroses Pusat).'
+  },
+  {
+    q: '🌈 Warna pelangi ada berapa?',
+    opts: ['A. 5', 'B. 6', 'C. 7', 'D. 8'],
+    ans: 'C', exp: 'Pelangi memiliki 7 warna: Merah, Jingga, Kuning, Hijau, Biru, Nila, Ungu.'
+  },
+  {
+    q: '📅 Hari Kemerdekaan Indonesia diperingati tanggal?',
+    opts: ['A. 17 Agustus 1945', 'B. 17 Agustus 1946', 'C. 28 Oktober 1928', 'D. 1 Juni 1945'],
+    ans: 'A', exp: 'Proklamasi Kemerdekaan Indonesia dibacakan 17 Agustus 1945.'
+  },
+  {
+    q: '🪨 Batuan yang terbentuk dari abu vulkanik adalah?',
+    opts: ['A. Granit', 'B. Batu Kapur', 'C. Tufa', 'D. Marmer'],
+    ans: 'C', exp: 'Tufa (tuff) adalah batuan piroklastik dari endapan abu vulkanik yang mengeras.'
+  },
+  {
+    q: '🦁 Hewan simbol Bendera Merah Putih (Garuda) adalah?',
+    opts: ['A. Elang', 'B. Singa', 'C. Garuda', 'D. Rajawali'],
+    ans: 'C', exp: 'Garuda Pancasila adalah simbol negara berbentuk burung Garuda (elang mitos).'
+  },
+  {
+    q: '🎮 Game "Mobile Legends" dikembangkan oleh perusahaan?',
+    opts: ['A. Moonton', 'B. Tencent', 'C. Garena', 'D. NetEase'],
+    ans: 'A', exp: 'Mobile Legends: Bang Bang dikembangkan oleh Moonton (Shanghai Moonton Technology).'
+  },
+  {
+    q: '💰 Mata uang Jepang adalah?',
+    opts: ['A. Yuan', 'B. Won', 'C. Yen', 'D. Ringgit'],
+    ans: 'C', exp: 'Mata uang Jepang adalah Yen (¥ / JPY).'
+  },
+  {
+    q: '🌊 Lautan terluas di dunia adalah?',
+    opts: ['A. Atlantik', 'B. Pasifik', 'C. Hindia', 'D. Antartika'],
+    ans: 'B', exp: 'Lautan Pasifik adalah lautan terbesar, meliputi ~30% permukaan bumi.'
+  },
+  {
+    q: '🧮 Hasil 2 pangkat 10 adalah?',
+    opts: ['A. 512', 'B. 1024', 'C. 2048', 'D. 4096'],
+    ans: 'B', exp: '2^10 = 1024.'
+  },
+  {
+    q: '🦠 Penyakit yang disebabkan virus Corona adalah?',
+    opts: ['A. MERS', 'B. SARS', 'C. COVID-19', 'D. Flu Biasa'],
+    ans: 'C', exp: 'COVID-19 disebabkan oleh virus SARS-CoV-2 (coronavirus novel).'
+  },
+  {
+    q: '🏝️ Pulau terbesar di Indonesia adalah?',
+    opts: ['A. Sumatera', 'B. Kalimantan', 'C. Papua', 'D. Sulawesi'],
+    ans: 'B', exp: 'Kalimantan (Borneo) adalah pulau terbesar di Indonesia (±743.000 km²).'
+  },
+  {
+    q: '🗼 Menara Eiffel berada di kota?',
+    opts: ['A. London', 'B. Roma', 'C. Paris', 'D. Madrid'],
+    ans: 'C', exp: 'Menara Eiffel adalah ikon kota Paris, Prancis.'
+  },
+  {
+    q: '⚛️ Unsur dengan nomor atom 1 adalah?',
+    opts: ['A. Helium', 'B. Hidrogen', 'C. Litium', 'D. Berilium'],
+    ans: 'B', exp: 'Hidrogen (H) memiliki nomor atom 1, unsur paling ringan.'
+  },
+  {
+    q: '🎵 Nada tertinggi dalam notasi balok (do re mi...) adalah?',
+    opts: ['A. Do', 'B. Re', 'C. Mi', 'D. Ti/Si'],
+    ans: 'D', exp: 'Dalam skala mayor, Ti (atau Si) adalah nada ke-7 dan tertinggi sebelum Do oktav berikutnya.'
+  },
+  {
+    q: '🏛️ Pancasila disahkan pada tanggal?',
+    opts: ['A. 1 Juni 1945', 'B. 18 Agustus 1945', 'C. 22 Juni 1945', 'D. 29 Agustus 1945'],
+    ans: 'B', exp: 'Pancasila disahkan sebagai dasar negara oleh PPKI tanggal 18 Agustus 1945.'
   }
 ]
 

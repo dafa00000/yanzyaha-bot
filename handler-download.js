@@ -50,7 +50,7 @@ function detectPlatform(url) {
 
 async function isYtdlpSupported(url) {
   try {
-    await execAsync(`yt-dlp --simulate --quiet "${url}"`, { timeout: 20000 })
+    await execAsync(`yt-dlp --simulate --quiet --js-runtimes node "${url}"`, { timeout: 20000 })
     return true
   } catch {
     return false
@@ -59,7 +59,7 @@ async function isYtdlpSupported(url) {
 
 async function getVideoDuration(url) {
   try {
-    const { stdout } = await execAsync(`yt-dlp --print duration "${cleanUrl(url)}"`, { timeout: 60000 })
+    const { stdout } = await execAsync(`yt-dlp --print duration --js-runtimes node "${cleanUrl(url)}"`, { timeout: 60000 })
     return parseInt(stdout.trim()) || 0
   } catch {
     return 0
@@ -77,7 +77,7 @@ async function downloadWithYtdlp(url, audioOnly = false, platformHint = '', retr
 
   if (audioOnly) {
     // Audio-only: simple strategy, convert to mp3
-    const cmd = `yt-dlp -x --audio-format mp3 --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
+    const cmd = `yt-dlp -x --audio-format mp3 --user-agent ${ua} --js-runtimes node ${cookiesArg} -o "${filePath}" "${url}"`
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         await execAsync(cmd, { timeout: 180000 })
@@ -101,7 +101,7 @@ async function downloadWithYtdlp(url, audioOnly = false, platformHint = '', retr
   let lastError = null
   for (const format of formatStrategies) {
     const attemptFilePath = path.join(TMP_DIR, `${Date.now()}_${Math.random().toString(36).slice(2,8)}.mp4`)
-    const cmd = `yt-dlp ${format} --no-playlist --user-agent ${ua} ${cookiesArg} -o "${attemptFilePath}" "${url}"`
+    const cmd = `yt-dlp ${format} --no-playlist --user-agent ${ua} --js-runtimes node ${cookiesArg} -o "${attemptFilePath}" "${url}"`
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
         await execAsync(cmd, { timeout: 180000 })

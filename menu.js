@@ -161,7 +161,7 @@ const SECTIONS = {
       { type: 'cmd', cmd: '.ig [user]', desc: 'Instagram' },
       { type: 'cmd', cmd: '.tt [user]', desc: 'TikTok' },
       { type: 'cmd', cmd: '.gh [user]', desc: 'GitHub' },
-      { type: 'cmd', cmd: '.roblox [user]', desc: 'Roblox' },
+      { type: 'cmd', cmd: '.roblox [user]', desc: 'Roblox + video ava' },
       { type: 'cmd', cmd: '.yt [nama]', desc: 'YouTube' },
     ],
   },
@@ -188,7 +188,13 @@ const SECTIONS = {
     items: [
       { type: 'cmd', cmd: '.groupid / .idgc', desc: 'Info group ID (di grup)' },
       { type: 'cmd', cmd: '.teks [pesan]', desc: 'Echo pesan' },
-      { type: 'cmd', cmd: '.menfess [pesan]', desc: 'Kirim pesan anonim' },
+    ],
+  },
+  menfess: {
+    title: '📨 MENFESS',
+    items: [
+      { type: 'cmd', cmd: '.menfess [pesan]', desc: 'Kirim pesan anonim ke grup' },
+      { type: 'cmd', cmd: '.menfessp @nomor [pesan]', desc: 'Kirim pesan anonim ke user' },
     ],
   },
   economy: {
@@ -305,6 +311,19 @@ const OWNER_EXTRA_SECTIONS = {
       { type: 'cmd', cmd: '.menucmdhelp', desc: 'Panduan menu management' },
     ],
   },
+  ownerMenfess: {
+    title: '📨 MENFESS ADMIN',
+    requiresOwner: true,
+    items: [
+      { type: 'cmd', cmd: '.menfesslist', desc: 'Statistik menfess (total, hari ini, banned)' },
+      { type: 'cmd', cmd: '.menfessban <nomor>', desc: 'Ban user dari menfess' },
+      { type: 'cmd', cmd: '.menfessunban <nomor>', desc: 'Unban user dari menfess' },
+      { type: 'cmd', cmd: '.menfesscooldown <detik>', desc: 'Set cooldown (min 5 detik)' },
+      { type: 'cmd', cmd: '.menfessmaxlen <karakter>', desc: 'Set max panjang pesan (min 10)' },
+      { type: 'cmd', cmd: '.menfessgroupadd <nama> <jid>', desc: 'Tambah grup ke whitelist' },
+      { type: 'cmd', cmd: '.menfessgrouplist', desc: 'Lihat whitelist grup menfess' },
+    ],
+  },
   ownerWhale: {
     title: '🐋 WHALE TRACKER (Solana)',
     requiresOwner: true,
@@ -400,7 +419,7 @@ const OWNER_EXTRA_SECTIONS = {
       { type: 'cmd', cmd: '.ig [user]', desc: 'Instagram' },
       { type: 'cmd', cmd: '.tt [user]', desc: 'TikTok' },
       { type: 'cmd', cmd: '.gh [user]', desc: 'GitHub' },
-      { type: 'cmd', cmd: '.roblox [user]', desc: 'Roblox' },
+      { type: 'cmd', cmd: '.roblox [user]', desc: 'Roblox + video ava' },
       { type: 'cmd', cmd: '.yt [nama]', desc: 'YouTube' },
     ],
   },
@@ -415,14 +434,6 @@ const OWNER_EXTRA_SECTIONS = {
       { type: 'cmd', cmd: '.tebak', desc: 'Tebak angka' },
       { type: 'cmd', cmd: '.kuis', desc: 'Kuis acak' },
       { type: 'cmd', cmd: '.jawab [jawaban]', desc: 'Jawab kuis' },
-    ],
-  },
-  ownerMenfess: {
-    title: '📨 MENFESS (lengkap)',
-    requiresOwner: true,
-    items: [
-      { type: 'cmd', cmd: '.menfess [pesan]', desc: 'Anonim ke grup' },
-      { type: 'cmd', cmd: '.menfessp [pesan]', desc: 'Anonim ke user' },
     ],
   },
   ownerGroup: {
@@ -659,7 +670,6 @@ function getSectionsForContext(ctx) {
     // whale tracker disabled — intentionally not pushed
     result.push(OWNER_EXTRA_SECTIONS.ownerML)
     result.push(OWNER_EXTRA_SECTIONS.ownerGame)
-    result.push(OWNER_EXTRA_SECTIONS.ownerMenfess)
     result.push(OWNER_EXTRA_SECTIONS.ownerGroup)
     result.push(OWNER_EXTRA_SECTIONS.ownerConfig)
     result.push(OWNER_EXTRA_SECTIONS.ownerGroupMgmt)

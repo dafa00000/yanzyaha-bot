@@ -4,3 +4,7 @@ dist/
 .env
 *.env
 auth/
+
+tmp/
+cache/
+marketplace/

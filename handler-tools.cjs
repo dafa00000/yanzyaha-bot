@@ -146,6 +146,27 @@ function calculate(expression) {
 // ─── VOICE NOTE ───────────────────────────────────────────────
 // Pakai edge-tts (Microsoft) dengan suara imut
 // Convert MP3 → OGG/Opus biar WhatsApp detect sebagai voice note
+
+function resolveEdgeTtsBin() {
+  const candidates = [
+    process.env.EDGE_TTS_BIN,
+    process.env.EDGE_TTS_PATH,
+    path.join(process.env.HERMES_HOME || '/opt/data', 'bin', 'edge-tts'),
+    path.join(process.env.HERMES_HOME || '/opt/data', 'venvs', 'wa-tools', 'bin', 'edge-tts'),
+    '/opt/data/bin/edge-tts',
+    '/opt/data/venvs/wa-tools/bin/edge-tts',
+    '/usr/local/bin/edge-tts',
+    'edge-tts',
+  ].filter(Boolean)
+  for (const bin of candidates) {
+    if (bin === 'edge-tts') return bin
+    try {
+      if (fs.existsSync(bin)) return bin
+    } catch {}
+  }
+  return 'edge-tts'
+}
+
 async function textToVoice(text, voice = 'en-US-AnaNeural') {
   try {
     const tmpDir = path.join(process.env.HERMES_HOME || '/opt/data', 'tmp')
@@ -160,13 +181,20 @@ async function textToVoice(text, voice = 'en-US-AnaNeural') {
     
     // Step 1: Generate MP3 with edge-tts
     const { spawn } = require('child_process')
+    const edgeTtsBin = resolveEdgeTtsBin()
     
     await new Promise((resolve, reject) => {
-      const proc = spawn('edge-tts', [
+      const proc = spawn(edgeTtsBin, [
         '--voice', voice,
         '--text', safeText,
         '--write-media', mp3File
-      ], { timeout: 60000 })
+      ], {
+        timeout: 60000,
+        env: {
+          ...process.env,
+          PATH: `/opt/data/bin:/opt/data/venvs/wa-tools/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ''}`,
+        },
+      })
       
       let stderr = ''
       proc.stderr.on('data', d => stderr += d.toString())
@@ -180,7 +208,7 @@ async function textToVoice(text, voice = 'en-US-AnaNeural') {
       })
       
       proc.on('error', (err) => {
-        reject(new Error(`edge-tts error: ${err.message}`))
+        reject(new Error(`edge-tts error: ${err.message} (bin=${edgeTtsBin})`))
       })
     })
 
@@ -226,7 +254,7 @@ async function textToVoice(text, voice = 'en-US-AnaNeural') {
   } catch (err) {
     return {
       success: false,
-      message: `❌ Gagal bikin voice note: ${err.message}\n\nPastikan edge-tts & ffmpeg terinstall:\npip install edge-tts\napt install ffmpeg`
+      message: `❌ Gagal bikin voice note: ${err.message}\n\nPastikan edge-tts & ffmpeg terinstall:\npython3 -m venv /opt/data/venvs/wa-tools && /opt/data/venvs/wa-tools/bin/pip install edge-tts\napt install ffmpeg`
     }
   }
 }

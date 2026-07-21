@@ -23,7 +23,8 @@ export async function stickerToImage(buffer) {
     const tmpIn = path.join(tmpdir(), `toimg_in_${Date.now()}.webp`)
     const tmpOut = path.join(tmpdir(), `toimg_out_${Date.now()}.png`)
     writeFileSync(tmpIn, buffer)
-    execSync(`ffmpeg -y -i "${tmpIn}" "${tmpOut}"`, { stdio: 'pipe' })
+    // Use -vframes 1 to extract first frame from animated WebP
+    execSync(`ffmpeg -y -i "${tmpIn}" -vframes 1 "${tmpOut}"`, { stdio: 'pipe' })
     const result = readFileSync(tmpOut)
     unlinkSync(tmpIn)
     unlinkSync(tmpOut)

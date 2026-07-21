@@ -387,24 +387,67 @@ function playSlot(sender, bet) {
   if (bet <= 0) return { success: false, message: 'Bet harus lebih dari 0!' }
   if (user.points < bet) return { success: false, message: `Saldo kurang! 💰 ${formatNumber(user.points)} poin` }
   
-  const symbols = ['🍒', '🍋', '🍊', '🍇', '💎', '7️⃣', '⭐']
+  // Track spins for pity system
+  user.slotSpins = (user.slotSpins || 0) + 1
+  const spinCount = user.slotSpins
+  
+  // 5 simbol + 2 wild (⭐ dan 💎) = peluang wild 2/7 = ~28.5%
+  const symbols = ['🍒', '🍋', '🍊', '7️⃣', '⭐', '💎', '🌟']  // 7 simbol (2 wild: ⭐ 💎)
   const s1 = symbols[getRandomInt(0, symbols.length - 1)]
   const s2 = symbols[getRandomInt(0, symbols.length - 1)]
   const s3 = symbols[getRandomInt(0, symbols.length - 1)]
   
   let multiplier = 0
   let result = ''
+  let isJackpot = false
+  let isMegaJackpot = false
+  let isGrandPot = false
   
-  if (s1 === s2 && s2 === s3) {
-    // Jackpot!
-    if (s1 === '💎') multiplier = 10
-    else if (s1 === '7️⃣') multiplier = 7
-    else if (s1 === '⭐') multiplier = 5
-    else multiplier = 3
-    result = '🎉 *JACKPOT!*'
-  } else if (s1 === s2 || s2 === s3 || s1 === s3) {
-    multiplier = 1.5
-    result = '✨ *Small Win!*'
+  // Cek wild (⭐ dan 💎 keduanya wild)
+  const wildSymbols = ['⭐', '💎']
+  const wildCount = [s1, s2, s3].filter(s => wildSymbols.includes(s)).length
+  const nonWild = [s1, s2, s3].filter(s => !wildSymbols.includes(s))
+  const allSame = nonWild.length > 0 && nonWild.every(s => s === nonWild[0])
+  const twoSame = nonWild.length >= 2 && (nonWild[0] === nonWild[1] || (nonWild.length === 3 && (nonWild[0] === nonWild[1] || nonWild[1] === nonWild[2] || nonWild[0] === nonWild[2])))
+  
+  // PITY SYSTEM: guaranteed jackpot every 8 spins, mega every 25, grandpot every 50
+  const pityJackpot = spinCount % 8 === 0
+  const pityMega = spinCount % 25 === 0
+  const pityGrand = spinCount % 50 === 0
+  
+  if (pityGrand || wildCount === 3) {
+    // GRAND POT: 1000x - every 50 spins guaranteed, atau 3 wild
+    multiplier = 1000
+    result = '🏆 *GRAND POT! (1000x)*'
+    isGrandPot = true
+    user.slotSpins = 0 // reset counter
+  } else if (pityMega || wildCount === 2) {
+    // MEGA JACKPOT: 500x - every 25 spins guaranteed, atau 2 wild
+    multiplier = 500
+    result = '🌟 *MEGA JACKPOT! (500x)*'
+    isMegaJackpot = true
+  } else if (pityJackpot || (wildCount === 1 && allSame)) {
+    // JACKPOT: 100x - every 8 spins guaranteed, atau 1 wild + 2 sama
+    multiplier = 100
+    result = '🎉 *JACKPOT! (100x)*'
+    isJackpot = true
+  } else if (wildCount === 1 && twoSame) {
+    // WILD WIN boosted
+    multiplier = 5
+    result = '✨ *WILD WIN! (5x)*'
+  } else if (wildCount === 1) {
+    // 1 Wild saja
+    multiplier = 3
+    result = '✨ *WILD! (3x)*'
+  } else if (allSame && nonWild.length === 3) {
+    // 3 simbol sama (tanpa wild)
+    multiplier = 8
+    result = '🎉 *JACKPOT! (8x)*'
+    isJackpot = true
+  } else if (twoSame) {
+    // 2 simbol sama
+    multiplier = 2
+    result = '✨ *WIN! (2x)*'
   } else {
     multiplier = 0
     result = '😢 *Kalah!*'
@@ -413,13 +456,18 @@ function playSlot(sender, bet) {
   const winAmount = Math.floor(bet * multiplier)
   if (multiplier > 0) {
     addPoints(sender, winAmount - bet)
-    user.wins++
+    // Reload user after addPoints to get updated points
+    const updatedUser = getUser(sender)
+    updatedUser.wins++
+    updatedUser.totalGames++
+    saveUser(sender, updatedUser)
   } else {
     removePoints(sender, bet)
-    user.losses++
+    const updatedUser = getUser(sender)
+    updatedUser.losses++
+    updatedUser.totalGames++
+    saveUser(sender, updatedUser)
   }
-  user.totalGames++
-  saveUser(sender, user)
   
   return {
     success: true,
@@ -434,10 +482,11 @@ function playSlot(sender, bet) {
       `│  ${s1} │ ${s2} │ ${s3}  │\n` +
       `└─────────────┘\n\n` +
       `${result}\n` +
-      (multiplier > 0 
+      (multiplier > 0
         ? `💰 Menang: +${formatNumber(winAmount)} poin (${multiplier}x)\n`
         : `💸 Kalah: -${formatNumber(bet)} poin\n`) +
-      `💎 Saldo: ${formatNumber(getBalance(sender))} poin`
+      `💎 Saldo: ${formatNumber(getBalance(sender))} poin` +
+      `\n🔄 Spin ke-${user.slotSpins} ${pityJackpot ? '🎁' : ''} ${pityMega ? '🌟' : ''} ${pityGrand ? '🏆' : ''}`
   }
 }
 

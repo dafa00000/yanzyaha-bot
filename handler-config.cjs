@@ -441,13 +441,20 @@ async function handle(sock, msg, body, sender) {
     case 'mymodel': {
       if (!value) {
         return replyWa(sock, jid,
-          '⚠️ Contoh: `.setmodel anthropic/claude-sonnet-4`\n\n' +
-          'Atau `.models` dulu buat liat daftar model.',
+          '⚠️ Contoh: `.setmodel gemini-2.5-flash`\n\n' +
+          'Atau `.models` dulu buat liat daftar model.\n' +
+          'Untuk Gemini OpenAI-compat: jangan pakai prefix `models/`.',
           msg
         )
       }
-      setUserConfig(sender, { HERMES_MODEL: value })
-      return replyWa(sock, jid, `✅ Model lo: \`${value}\``, msg)
+      // Gemini OpenAI-compat: strip models/ prefix so ids match chat/completions
+      let modelValue = value.trim()
+      const effBase = (getEffectiveEnv(sender).OPENAI_BASE_URL || process.env.OPENAI_BASE_URL || '')
+      if (/generativelanguage\.googleapis\.com/i.test(effBase)) {
+        modelValue = modelValue.replace(/^models\//i, '')
+      }
+      setUserConfig(sender, { HERMES_MODEL: modelValue })
+      return replyWa(sock, jid, `✅ Model lo: \`${modelValue}\``, msg)
     }
 
     case 'models': {
