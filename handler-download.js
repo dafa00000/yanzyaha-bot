@@ -8,6 +8,8 @@ const execAsync = promisify(exec)
 const TIMEOUT = 30000
 const TMP_DIR = '/tmp/wa-tmp'
 const MAX_DURATION = 36000
+// yt-dlp path — installed at /opt/data/bin/yt-dlp (not in default PATH)
+const YTDLP = process.env.YTDLP_PATH || '/opt/data/bin/yt-dlp'
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true })
 
 function cleanTmp(filePath) { try { fs.unlinkSync(filePath) } catch {} }
@@ -27,6 +29,25 @@ function isSoundCloudUrl(url) { return /soundcloud\\.com/.test(url) }
 function isCapcutUrl(url) { return /capcut\\.com/.test(url) }
 function isLikeeUrl(url) { return /likee\\.video|likee\\.com/.test(url) }
 function cleanUrl(url) { return url.split('?')[0] }
+
+// Strip YouTube playlist/radio params yang bikin yt-dlp hang
+// Hapus &list= &start_radio= &start= &t= &index= tapi KEEP &v=
+function cleanYtUrl(rawUrl) {
+  try {
+    const u = new URL(rawUrl)
+    // Hapus params yang bikin yt-dlp nyangkut di playlist
+    u.searchParams.delete('list')
+    u.searchParams.delete('start_radio')
+    u.searchParams.delete('start')
+    u.searchParams.delete('t')
+    u.searchParams.delete('index')
+    u.searchParams.delete('pp')
+    return u.toString()
+  } catch {
+    // Fallback: strip manual
+    return rawUrl.replace(/[?&](list|start_radio|start|t|index|pp)=[^&]*/g, '').replace(/[?&]$/, '')
+  }
+}
 
 // Detect platform from URL for any-media-to-audio conversion
 function detectPlatform(url) {
@@ -50,7 +71,8 @@ function detectPlatform(url) {
 
 async function isYtdlpSupported(url) {
   try {
-    await execAsync(`yt-dlp --simulate --quiet --js-runtimes node "${url}"`, { timeout: 20000 })
+    const clean = isYouTubeUrl(url) ? cleanYtUrl(url) : url
+    await execAsync(`"${YTDLP}" --simulate --quiet --js-runtimes node "${clean}"`, { timeout: 20000 })
     return true
   } catch {
     return false
@@ -59,7 +81,12 @@ async function isYtdlpSupported(url) {
 
 async function getVideoDuration(url) {
   try {
-    const { stdout } = await execAsync(`yt-dlp --print duration --js-runtimes node "${cleanUrl(url)}"`, { timeout: 60000 })
+    const clean = isYouTubeUrl(url) ? cleanYtUrl(url) : cleanUrl(url)
+    const ytClient = isYouTubeUrl(url) ? '--extractor-args "youtube:player_client=android"' : ''
+    const { stdout } = await execAsync(
+      `"${YTDLP}" --print duration --js-runtimes node ${ytClient} --no-playlist "${clean}"`,
+      { timeout: 60000 }
+    )
     return parseInt(stdout.trim()) || 0
   } catch {
     return 0
@@ -69,6 +96,8 @@ async function getVideoDuration(url) {
 async function downloadWithYtdlp(url, audioOnly = false, platformHint = '', retries = 2) {
   const ext = audioOnly ? 'mp3' : 'mp4'
   const filePath = path.join(TMP_DIR, `${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`)
+  // Clean YouTube URL (strip playlist/radio params yang bikin hang)
+  const cleanDownloadUrl = isYouTubeUrl(url) ? cleanYtUrl(url) : url
   // Use realistic browser User-Agent (bypasses some anti-bot blocks)
   const ua = '"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"'
   // Cookies: user can provide IG/FB session cookies via env var
@@ -76,66 +105,81 @@ async function downloadWithYtdlp(url, audioOnly = false, platformHint = '', retr
   const cookiesArg = buildYtdlpCookiesArg(platformHint)
 
   if (audioOnly) {
-    // Audio-only: simple strategy, convert to mp3
-    const cmd = `yt-dlp -x --audio-format mp3 --user-agent ${ua} --js-runtimes node ${cookiesArg} -o "${filePath}" "${url}"`
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        await execAsync(cmd, { timeout: 180000 })
-        if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) return filePath
-      } catch (e) {
-        console.error(`[yt-dlp audio] attempt ${attempt + 1} failed: ${e.message?.slice(0, 200)}`)
-        if (attempt === retries) throw e
-        await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
+    // Audio-only: for YouTube try android client first (bypass bot-check), fallback web_embedded
+    const clientArgs = isYouTubeUrl(cleanDownloadUrl)
+      ? [
+          '--extractor-args "youtube:player_client=android"',
+          '--extractor-args "youtube:player_client=web_embedded"',
+        ]
+      : ['']
+    for (const clientArg of clientArgs) {
+      const cmd = `"${YTDLP}" -x --audio-format mp3 --no-playlist --user-agent ${ua} --js-runtimes node ${clientArg} ${cookiesArg} -o "${filePath}" "${cleanDownloadUrl}"`
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          await execAsync(cmd, { timeout: 180000 })
+          if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) return filePath
+        } catch (e) {
+          console.error(`[yt-dlp audio ${clientArg || 'default'}] attempt ${attempt + 1} failed: ${e.message?.slice(0, 200)}`)
+          if (attempt === retries) break
+          await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
+        }
       }
+      if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) return filePath
     }
+    throw new Error('Gagal download audio. Coba link lain / tanpa playlist.')
   }
 
-  // Video: try multiple format strategies in order of preference
+  // Video: YouTube uses android/web_embedded clients; others use plain yt-dlp
+  const clientArgs = isYouTubeUrl(cleanDownloadUrl)
+    ? [
+        '--extractor-args "youtube:player_client=android"',
+        '--extractor-args "youtube:player_client=web_embedded"',
+      ]
+    : ['']
   const formatStrategies = [
-    `-f "best[ext=mp4][height<=720]/best[height<=720]/best[ext=mp4]/best"`,
-    `-f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]/best"`,
+    `-f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best" --merge-output-format mp4`,
+    `-f "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" --merge-output-format mp4`,
     `-f "best[ext=mp4]/best" --merge-output-format mp4`,
     `-f "best"`,
   ]
 
   let lastError = null
-  for (const format of formatStrategies) {
-    const attemptFilePath = path.join(TMP_DIR, `${Date.now()}_${Math.random().toString(36).slice(2,8)}.mp4`)
-    const cmd = `yt-dlp ${format} --no-playlist --user-agent ${ua} --js-runtimes node ${cookiesArg} -o "${attemptFilePath}" "${url}"`
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      try {
-        await execAsync(cmd, { timeout: 180000 })
-        if (fs.existsSync(attemptFilePath) && fs.statSync(attemptFilePath).size > 0) {
-          // If the file was saved with a different extension (e.g. .mkv), find and rename it
-          const dir = path.dirname(attemptFilePath)
-          const baseName = path.basename(attemptFilePath, path.extname(attemptFilePath))
-          const files = fs.readdirSync(dir).filter(f => f.startsWith(baseName))
-          const actualFile = files.length > 0 ? path.join(dir, files[0]) : attemptFilePath
-          if (actualFile !== filePath && fs.existsSync(actualFile)) {
-            fs.renameSync(actualFile, filePath)
-          } else if (actualFile === attemptFilePath) {
-            // File is at expected path
-          }
-          if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) return filePath
-          // Check attemptFilePath directly
-          if (fs.existsSync(attemptFilePath) && fs.statSync(attemptFilePath).size > 0) {
-            fs.copyFileSync(attemptFilePath, filePath)
-            cleanTmp(attemptFilePath)
-            return filePath
-          }
-        }
-      } catch (e) {
-        lastError = e
-        console.error(`[yt-dlp video] format="${format.slice(0,40)}..." attempt ${attempt + 1} failed: ${e.message?.slice(0, 200)}`)
-        if (attempt === retries) break // try next format strategy
-        await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
-      } finally {
-        // Clean up any partial files from this attempt (except our target)
+  for (const clientArg of clientArgs) {
+    for (const format of formatStrategies) {
+      const attemptFilePath = path.join(TMP_DIR, `${Date.now()}_${Math.random().toString(36).slice(2,8)}.mp4`)
+      const cmd = `"${YTDLP}" ${format} --no-playlist --user-agent ${ua} --js-runtimes node ${clientArg} ${cookiesArg} -o "${attemptFilePath}" "${cleanDownloadUrl}"`
+      for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-          if (fs.existsSync(attemptFilePath) && attemptFilePath !== filePath) cleanTmp(attemptFilePath)
-        } catch {}
+          await execAsync(cmd, { timeout: 180000 })
+          if (fs.existsSync(attemptFilePath) && fs.statSync(attemptFilePath).size > 0) {
+            const dir = path.dirname(attemptFilePath)
+            const baseName = path.basename(attemptFilePath, path.extname(attemptFilePath))
+            const files = fs.readdirSync(dir).filter(f => f.startsWith(baseName))
+            const actualFile = files.length > 0 ? path.join(dir, files[0]) : attemptFilePath
+            if (actualFile !== filePath && fs.existsSync(actualFile)) {
+              fs.renameSync(actualFile, filePath)
+            }
+            if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) return filePath
+            if (fs.existsSync(attemptFilePath) && fs.statSync(attemptFilePath).size > 0) {
+              fs.copyFileSync(attemptFilePath, filePath)
+              cleanTmp(attemptFilePath)
+              return filePath
+            }
+          }
+        } catch (e) {
+          lastError = e
+          console.error(`[yt-dlp video ${clientArg || 'default'}] format="${format.slice(0,40)}..." attempt ${attempt + 1} failed: ${e.message?.slice(0, 200)}`)
+          if (attempt === retries) break
+          await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
+        } finally {
+          try {
+            if (fs.existsSync(attemptFilePath) && attemptFilePath !== filePath) cleanTmp(attemptFilePath)
+          } catch {}
+        }
       }
+      if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) return filePath
     }
+    if (fs.existsSync(filePath) && fs.statSync(filePath).size > 0) return filePath
   }
   throw lastError || new Error('All yt-dlp format strategies failed')
 }
@@ -151,7 +195,11 @@ async function downloadWithYtdlp(url, audioOnly = false, platformHint = '', retr
 function buildYtdlpCookiesArg(platform) {
   let cookiesFile = null
 
-  if (platform === 'instagram' || platform === 'ig') {
+  if (platform === 'youtube' || platform === 'ytdl' || platform === 'ytmp3') {
+    if (process.env.YT_COOKIES_FILE && fs.existsSync(process.env.YT_COOKIES_FILE)) {
+      cookiesFile = process.env.YT_COOKIES_FILE
+    }
+  } else if (platform === 'instagram' || platform === 'ig') {
     if (process.env.IG_COOKIES_FILE && fs.existsSync(process.env.IG_COOKIES_FILE)) {
       cookiesFile = process.env.IG_COOKIES_FILE
     } else if (process.env.IG_SESSIONID) {
@@ -279,11 +327,38 @@ async function downloadViaGtechFB(url) {
   }
 }
 
+// siputzx FB downloader (public, no key) — returns direct CDN urls
+async function downloadViaSiputzxFB(url) {
+  const apiUrl = `https://api.siputzx.my.id/api/d/facebook?url=${encodeURIComponent(url)}`
+  try {
+    const res = await axios.get(apiUrl, {
+      timeout: 60000,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' },
+      validateStatus: s => s < 500,
+    })
+    const d = res.data
+    const downloads = d?.data?.downloads || d?.downloads || []
+    if (!d?.status || !Array.isArray(downloads) || !downloads.length) {
+      console.log(`[siputzx-fb] empty/invalid: status=${d?.status}`)
+      return null
+    }
+    // Prefer HD/video entries
+    const videos = downloads.filter(x => (x.type || 'video') === 'video' && x.url)
+    const pick = videos.find(x => /hd|720|1080/i.test(String(x.quality || ''))) || videos[0] || downloads.find(x => x.url)
+    if (!pick?.url) return null
+    console.log(`[siputzx-fb] ok quality=${pick.quality || '?'}`)
+    return { url: pick.url, source: 'siputzx', resolution: pick.quality || 'video', title: d?.data?.title || '' }
+  } catch (err) {
+    console.error(`[siputzx-fb] failed:`, err.message)
+    return null
+  }
+}
+
 // ─── DOWNLOAD WITH FALLBACK ─────────────────────────────────────────────────
 // Strategy depends on platform:
 //   YT / Twitter / Pinterest / TikTok → yt-dlp first (reliable)
 //   Instagram → discardapi → yt-dlp → cobalt (if user provides self-host URL)
-//   Facebook  → gtech fb → yt-dlp → cobalt
+//   Facebook  → siputzx → gtech fb → yt-dlp
 async function downloadWithFallback(url, platformLabel = '') {
   const platform = platformLabel.toLowerCase()
 
@@ -296,8 +371,11 @@ async function downloadWithFallback(url, platformLabel = '') {
     }
   }
 
-  // For FB: prefer gtech fb (fast, returns direct URL) with retry
+  // For FB: siputzx first (no key), then gtech, then yt-dlp
   if (platform === 'facebook' || platform === 'fb') {
+    const siputzx = await downloadViaSiputzxFB(url)
+    if (siputzx) return { ...siputzx, type: 'direct' }
+
     for (let attempt = 0; attempt < 2; attempt++) {
       const apiResult = await downloadViaGtechFB(url)
       if (apiResult) return { ...apiResult, type: 'direct' }
@@ -308,6 +386,7 @@ async function downloadWithFallback(url, platformLabel = '') {
       return { filePath: await downloadWithYtdlp(url, false, platform), source: 'yt-dlp', type: 'file' }
     } catch (e) {
       console.error(`[download] yt-dlp failed for FB: ${e.message?.slice(0, 200)}`)
+      throw new Error('Semua metode FB gagal (siputzx/gtech/yt-dlp)')
     }
   }
 
@@ -672,7 +751,7 @@ async function downloadInstagramRobust(url) {
     const cookiesArg = buildYtdlpCookiesArg('instagram')
     if (!cookiesArg) return null  // skip if no cookies configured
     const filePath = path.join(TMP_DIR, `ig_${Date.now()}.mp4`)
-    const cmd = `yt-dlp -f "best[ext=mp4]/best" --extractor-args "instagram:api_version=v1" --no-check-certificates --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
+    const cmd = `"${YTDLP}" -f "best[ext=mp4]/best" --extractor-args "instagram:api_version=v1" --no-check-certificates --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
     await execAsync(cmd, { timeout: 180000 })
     if (!fs.existsSync(filePath) || fs.statSync(filePath).size === 0) throw new Error('Empty file')
     return { filePath, source: 'yt-dlp+cookies', type: 'file', strategy: 'yt-dlp-cookies' }
@@ -710,7 +789,7 @@ async function convertUrlToAudio(url) {
   const filePath = path.join(TMP_DIR, `toaudio_${Date.now()}_${Math.random().toString(36).slice(2,6)}.mp3`)
 
   // Strategy 1: yt-dlp -x --audio-format mp3 (universal, most reliable)
-  const ytdlpCmd = `yt-dlp -x --audio-format mp3 --audio-quality 0 --no-playlist --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
+  const ytdlpCmd = `"${YTDLP}" -x --audio-format mp3 --audio-quality 0 --no-playlist --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await execAsync(ytdlpCmd, { timeout: 180000 })
@@ -736,7 +815,7 @@ async function convertUrlToAudio(url) {
   }
 
   // Strategy 2: yt-dlp with --extract-audio flag (alternative approach)
-  const altCmd = `yt-dlp --extract-audio --audio-format mp3 --audio-quality 0 --no-playlist --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
+  const altCmd = `"${YTDLP}" --extract-audio --audio-format mp3 --audio-quality 0 --no-playlist --user-agent ${ua} ${cookiesArg} -o "${filePath}" "${url}"`
   try {
     await execAsync(altCmd, { timeout: 180000 })
     // Check for .mp3 file (yt-dlp might create .mp3 from original name)
@@ -763,7 +842,7 @@ async function convertUrlToAudio(url) {
 async function getTitleForUrl(url) {
   try {
     const { stdout } = await execAsync(
-      `yt-dlp --print title --print uploader --no-playlist "${cleanUrl(url)}"`,
+      `"${YTDLP}" --print title --print uploader --no-playlist --js-runtimes node "${isYouTubeUrl(url) ? cleanYtUrl(url) : cleanUrl(url)}"`,
       { timeout: 20000 }
     )
     const [title, uploader] = stdout.trim().split('\n').map(s => s.trim())
@@ -807,7 +886,7 @@ export async function handleDownload(sock, msg, text, command) {
       tmpClip = `${TMP_DIR}/${ts}_clip.mp4`
 
       await execAsync(
-        `yt-dlp -f "best[ext=mp4]/best" --merge-output-format mp4 --no-playlist -o "${tmpFull}" "${cUrl}"`,
+        `"${YTDLP}" -f "best[ext=mp4]/best" --merge-output-format mp4 --no-playlist -o "${tmpFull}" "${cUrl}"`,
         { timeout: 180000 }
       )
 
@@ -839,17 +918,19 @@ export async function handleDownload(sock, msg, text, command) {
 
   if (command === 'ytdl' || command === 'ytmp3') {
     if (!url || !isYouTubeUrl(url)) return sendText(`❌ Format salah!\nContoh: .${command} https://youtu.be/xxxxx`)
+    // Strip playlist/radio params biar yt-dlp ga hang
+    const ytUrl = cleanYtUrl(url)
     await sendText('⏳ Mengecek durasi video...')
-    const duration = await getVideoDuration(url)
+    const duration = await getVideoDuration(ytUrl)
     if (duration > MAX_DURATION) {
       const menit = Math.floor(duration / 60)
-      return sendText(`⚠️ Video terlalu panjang (*${menit} menit*).\n\nSilakan download manual:\n🔗 https://cobalt.tools\n\nPaste link ini di cobalt.tools:\n${url}`)
+      return sendText(`⚠️ Video terlalu panjang (*${menit} menit*).\n\nSilakan download manual:\n🔗 https://cobalt.tools\n\nPaste link ini di cobalt.tools:\n${ytUrl}`)
     }
     await sendText('⏳ Sedang mengunduh dari YouTube...')
     let filePath = null
     try {
       const audioOnly = command === 'ytmp3'
-      filePath = await downloadWithYtdlp(url, audioOnly)
+      filePath = await downloadWithYtdlp(ytUrl, audioOnly)
       if (audioOnly) {
         await sock.sendMessage(from, { audio: fs.readFileSync(filePath), mimetype: 'audio/mpeg', ptt: false }, { quoted: msg })
       } else {
@@ -959,7 +1040,7 @@ export async function handleDownload(sock, msg, text, command) {
       let finalCaption = `📸 *Instagram*${result.source ? ` — ${result.source}` : ''}\n\n_Downloaded by WA Bot_`
       try {
         const { stdout: meta } = await execAsync(
-          `yt-dlp --print title --print uploader --no-playlist "${url}"`,
+          `"${YTDLP}" --print title --print uploader --no-playlist "${url}"`,
           { timeout: 30000 }
         )
         const [title, uploader] = meta.trim().split('\n').map(s => s.trim())
@@ -1012,15 +1093,38 @@ export async function handleDownload(sock, msg, text, command) {
     if (!url || !isFacebookUrl(url)) return sendText('❌ Format salah! Contoh: .fbdl https://www.facebook.com/share/v/xxxxx')
     await sendText('⏳ Sedang mengunduh dari Facebook...')
     try {
-      // gtech fb → yt-dlp fallback
+      // siputzx → gtech → yt-dlp
       const result = await downloadWithFallback(url, 'facebook')
       console.log(`[fbdl] downloaded via ${result.source} (${result.type})`)
 
-      // Build caption with metadata
       let finalFbCaption = `📘 *Facebook* — ${result.resolution || result.source}\n\n_Downloaded by WA Bot_`
+      if (result.title) finalFbCaption = `📘 *Facebook*\n📝 ${result.title}\n🎬 ${result.resolution || result.source}\n\n_Downloaded by WA Bot_`
 
       if (result.type === 'direct') {
-        // Stream URL directly to WA (faster)
+        // Prefer buffer upload — CDN token URLs often fail if WA fetches them
+        try {
+          const mediaRes = await axios.get(result.url, {
+            responseType: 'arraybuffer',
+            timeout: 120000,
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36', Accept: '*/*' },
+            maxRedirects: 5,
+          })
+          const buf = Buffer.from(mediaRes.data)
+          if (buf.length > 0) {
+            const sizeMB = buf.length / 1024 / 1024
+            if (sizeMB > 64) {
+              return sendText(`⚠️ Video terlalu besar (*${sizeMB.toFixed(1)} MB*). FB limit.\n\nCoba:\n🔗 https://fdown.net\nPaste: ${url}`)
+            }
+            await sock.sendMessage(from, {
+              video: buf,
+              caption: finalFbCaption,
+              mimetype: 'video/mp4',
+            }, { quoted: msg })
+            return
+          }
+        } catch (dlErr) {
+          console.error(`[fbdl] buffer download failed: ${dlErr.message?.slice(0, 150)} — try direct URL`)
+        }
         await sock.sendMessage(from, {
           video: { url: result.url },
           caption: finalFbCaption,
@@ -1037,15 +1141,13 @@ export async function handleDownload(sock, msg, text, command) {
         cleanTmp(fpath)
       }
     } catch (err) {
-      const cookiesHelp = !process.env.FB_COOKIES_FILE
-        ? `\n\n💡 *Fix permanen:* export cookies FB dari browser\n   (extension "Get cookies.txt LOCALLY" → save as file →\n    upload ke Railway volume, set env var\n    \`FB_COOKIES_FILE=/app/fb-cookies.txt\`)`
-        : ''
+      console.error(`[fbdl] failed: ${err.message?.slice(0, 200)}`)
       await sendText(
         `❌ Gagal download Facebook.\n\n` +
         `Penyebab umum:\n` +
-        `• Video private / restricted\n` +
-        `• IP Railway di-block FB\n` +
-        `• Perlu login (FB agresif anti-bot)${cookiesHelp}\n\n` +
+        `• Post private / restricted\n` +
+        `• Butuh login cookies FB\n` +
+        `• API/public scraper lagi down\n\n` +
         `Coba alternatif web:\n` +
         `🔗 https://fdown.net\n` +
         `🔗 https://snapsave.app\n\n` +

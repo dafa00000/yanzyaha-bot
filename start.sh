@@ -1,14 +1,9 @@
-#!/data/data/com.termux/files/usr/bin/bash
-cd /data/data/com.termux/files/home/wa-bot
-echo "🤖 Bot dimulai..."
-while true; do
-  node index.js
-  EXIT=$?
-  if [ $EXIT -eq 2 ]; then
-    echo "🔄 Restarting bot..."
-    sleep 3
-  else
-    echo "🛑 Bot berhenti (exit code: $EXIT)"
-    break
-  fi
-done
+#!/usr/bin/env bash
+cd /opt/data/bots/yanzyaha-bot
+set -a
+[ -f .env ] && . ./.env
+set +a
+export PATH="/opt/data/bin:${PATH}"
+export YTDLP_PATH="${YTDLP_PATH:-/opt/data/bin/yt-dlp}"
+export HERMES_HOME="${HERMES_HOME:-/opt/data}"
+exec /usr/local/bin/node index.js

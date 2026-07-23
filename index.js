@@ -775,6 +775,7 @@ case 'tomp3':
           await sendText(
             `💰 *SALDO LO*\n\n` +
             `${balDisplay}\n` +
+            `🀄 Free spin MJ: *${(economy.getMjFsTotal && economy.getMjFsTotal(sender).total) || user.freeSpins || 0}*\n` +
             `${rank.label}\n` +
             `📊 ${progressBar}\n` +
             `🎮 ${user.totalGames} game dimainkan\n` +
@@ -809,18 +810,25 @@ case 'tomp3':
         case 'shop': {
           const items = economy.getShop()
           let shopText = '🛒 *SHOP*\n\n'
-          items.forEach((item, i) => {
+          items.forEach((item) => {
             shopText += `${item.emoji} ${item.name}\n`
             shopText += `   ${item.desc}\n`
-            shopText += `   💰 ${economy.formatNumber(item.price)} poin\n\n`
+            if (item.dynamic || item.id === 'mjfs') {
+              shopText += `   💰 Harga dinamis: \`.mjfs [bet] [qty]\` (max 20)\n`
+            } else {
+              shopText += `   💰 ${economy.formatNumber(item.price)} poin\n`
+            }
+            shopText += `   ID: \`${item.id}\`\n\n`
           })
-          shopText += `Ketik: .buy [item_id]\n`
-          shopText += `Contoh: .buy shield`
+          shopText += `Free spin mahjong:\n`
+          shopText += `• Beli: .mjfs 100 10\n`
+          shopText += `• Auto: .mj free\n`
+          shopText += `• Cek: .freespin`
           await sendText(shopText)
           break
         }
         case 'buy': {
-          if (!text) { await sendText('❌ Contoh: .buy shield\nAtau: .buy shield 5 (beli 5 sekaligus)'); break }
+          if (!text) { await sendText('❌ Contoh: .buy shield\nFree spin mahjong: .mjfs [bet] [qty]'); break }
           
           // Parse: .buy [item name] [quantity]
           const buyParts = text.trim().split(/\s+/)
@@ -838,14 +846,111 @@ case 'tomp3':
           
           if (quantity < 1) quantity = 1
           if (quantity > 100) quantity = 100
+
+          // .buy mjfs 100 10  OR  .buy freespin 100 10
+          const qLow = itemQuery.toLowerCase()
+          if (/^(mjfs|freespin|free\s*spin|fs|spin)$/i.test(qLow.split(/\s+/)[0]) || qLow.includes('mahjong')) {
+            // keep digit tokens as strings (huge bets)
+            const toks = text.trim().split(/\s+/)
+            const digitToks = toks.filter(t => /^\d+$/.test(t))
+            if (digitToks.length >= 2) {
+              const result = economy.buyMahjongFreeSpins(sender, digitToks[0], parseInt(digitToks[1], 10))
+              await sendText(result.message)
+              break
+            }
+            if (digitToks.length === 1) {
+              const result = economy.buyMahjongFreeSpins(sender, digitToks[0], quantity > 1 ? quantity : 0)
+              await sendText(result.message)
+              break
+            }
+            const result = economy.buyMahjongFreeSpins(sender, 0, 0)
+            await sendText(result.message)
+            break
+          }
           
           const result = economy.buyItem(sender, itemQuery.toLowerCase(), quantity)
           await sendText(result.message)
           break
         }
+        case 'mjfs':
+        case 'buyfs': {
+          // .mjfs [bet] [qty] — keep bet as STRING (BigInt, no parseInt precision loss)
+          const parts = (text || '').trim().split(/\s+/).filter(Boolean)
+          const bet = parts[0]
+          const qty = parseInt(parts[1], 10)
+          const result = economy.buyMahjongFreeSpins(sender, bet, qty)
+          await sendText(result.message)
+          break
+        }
+        case 'freespin':
+        case 'freespins':
+        case 'fs': {
+          // .freespin → status
+          // .freespin [bet] [qty] → buy mahjong FS
+          const parts = (text || '').trim().split(/\s+/).filter(Boolean)
+          if (parts.length >= 2 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[1])) {
+            const result = economy.buyMahjongFreeSpins(sender, parts[0], parseInt(parts[1], 10))
+            await sendText(result.message)
+          } else if (parts.length === 1 && /^\d+$/.test(parts[0])) {
+            // qty only — default bet 100
+            const result = economy.buyMahjongFreeSpins(sender, '100', parseInt(parts[0], 10))
+            await sendText(result.message)
+          } else {
+            const result = economy.freeSpinStatus(sender)
+            await sendText(result.message)
+          }
+          break
+        }
         case 'slot': {
-          const bet = parseInt(text) || 100
-          const result = economy.playSlot(sender, bet)
+          const t = (text || '').trim().toLowerCase()
+          if (t === 'free' || t === 'fs' || t === 'freespin' || t === 'f') {
+            await sendText('Free spin sekarang khusus *mahjong*.\nBeli: `.mjfs [bet] [qty]`\nAuto: `.mj free`')
+            break
+          }
+          const bet = t ? parseInt(text, 10) : 100
+          if (t && isNaN(bet)) {
+            await sendText('❌ Contoh: .slot 100')
+            break
+          }
+          const result = economy.playSlot(sender, bet || 100)
+          await sendText(result.message)
+          break
+        }
+        case 'mahjong':
+        case 'mj':
+        case 'majiang': {
+          const t = (text || '').trim().toLowerCase()
+          if (!t) {
+            await sendText(
+              `🀄 *MAHJONG*\n\n` +
+              `Main: \`.mj [bet]\` · contoh \`.mj 100\`\n` +
+              `Beli FS: \`.mjfs [bet] [qty]\` (max 20)\n` +
+              `  contoh \`.mjfs 100 10\` · \`.mjfs 500 20\`\n` +
+              `Auto FS: \`.mj free\` / \`.mahjong auto\`\n` +
+              `Cek FS: \`.freespin\`\n\n` +
+              `Tarik 5 tile → pair / pung / kong / full house.`
+            )
+            break
+          }
+          if (t === 'free' || t === 'fs' || t === 'freespin' || t === 'auto' || t === 'f') {
+            const result = economy.playMahjongFreeAuto(sender)
+            await sendText(result.message)
+            break
+          }
+          // .mj fs 100 10 shortcut buy
+          const parts = t.split(/\s+/)
+          if ((parts[0] === 'fs' || parts[0] === 'buy') && parts.length >= 3) {
+            const result = economy.buyMahjongFreeSpins(sender, parts[1], parseInt(parts[2], 10))
+            await sendText(result.message)
+            break
+          }
+          // paid play — string bet for big numbers
+          const betRaw = (text || '').trim().split(/\s+/)[0]
+          if (!/^\d+$/.test(betRaw) || betRaw === '0') {
+            await sendText('❌ Contoh: .mj 100 · FS: .mjfs 100 10 · Auto: .mj free')
+            break
+          }
+          const result = economy.playMahjong(sender, betRaw)
           await sendText(result.message)
           break
         }
@@ -873,9 +978,9 @@ case 'tomp3':
               `🎡 *ROULETTE*\n\n` +
               `Cara: .roulette [pilihan] [bet]\n\n` +
               `Pilihan:\n` +
-              `• merah/hitam (2x)\n` +
-              `• genap/ganjil (2x)\n` +
-              `• angka 0-36 (36x)\n\n` +
+              `• merah/hitam (≈1.9x)\n` +
+              `• genap/ganjil (≈1.9x)\n` +
+              `• angka 0-36 (public 18x / owner 36x)\n\n` +
               `Contoh: .roulette merah 100`
             )
             break
@@ -884,6 +989,47 @@ case 'tomp3':
           const choice = parts[0]
           const bet = parseInt(parts[1]) || 100
           const result = economy.playRoulette(sender, choice, bet)
+          await sendText(result.message)
+          break
+        }
+        case 'macau':
+        case 'togel': {
+          if (!text) {
+            await sendText(
+              `🧧 *MACAU*\n\n` +
+              `Format: .macau [2d/3d/4d] [angka] [bet]\n` +
+              `Contoh: .macau 2d 25 100\n` +
+              `Contoh: .macau 4d 1234 50\n\n` +
+              `Hadiah (public): 2D ~55x · 3D ~350x · 4D ~2000x\n` +
+              `+ partial 2D/3D belakang (lebih kecil)`
+            )
+            break
+          }
+          const parts = text.trim().split(/\s+/)
+          const mode = parts[0]
+          const pick = parts[1]
+          const bet = parseInt(parts[2]) || 100
+          const result = economy.playMacau(sender, mode, pick, bet)
+          await sendText(result.message)
+          break
+        }
+        case 'spaceman':
+        case 'crash': {
+          if (!text) {
+            await sendText(
+              `🚀 *SPACEMAN*\n\n` +
+              `Format: .spaceman [bet] [target]\n` +
+              `Contoh: .spaceman 100 1.5\n` +
+              `Contoh: .spaceman 500 2\n\n` +
+              `Menang jika crash ≥ target.\n` +
+              `Target tinggi = risiko tinggi (public lebih pelit).`
+            )
+            break
+          }
+          const parts = text.trim().split(/\s+/)
+          const bet = parseInt(parts[0]) || 100
+          const target = parts[1] || '2'
+          const result = economy.playSpaceman(sender, bet, target)
           await sendText(result.message)
           break
         }

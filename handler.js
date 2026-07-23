@@ -4,7 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
-import { makeSticker, stickerToImage } from './src/features/sticker.js'
+import { makeSticker, stickerToImage, stickerToVideo } from './src/features/sticker.js'
 import { downloadYoutube } from './src/features/youtube.js'
 import { downloadTiktok } from './src/features/tiktok.js'
 import { getInfo } from './src/features/info.js'
@@ -160,14 +160,14 @@ _Bot ini open source!_`
         break
       }
 
-      // ==================== STIKER → GAMBAR ====================
+      // ==================== STIKER → GAMBAR / VIDEO ====================
       case 'toimg':
       case 'toimage': {
         const quotedSticker = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.stickerMessage
         const isSticker = mediaType === 'sticker'
 
         if (!isSticker && !quotedSticker) {
-          await reply(sock, msg, '⚠️ Kirim/reply stiker dengan caption *.toimg*')
+          await reply(sock, msg, '⚠️ Kirim/reply stiker dengan caption *.toimg*\n_Support stiker animasi / dari video_')
           break
         }
 
@@ -184,11 +184,37 @@ _Bot ini open source!_`
           buffer = await downloadMediaMessage(fakeMsg, 'buffer', {})
         }
 
-        const imgBuf = await stickerToImage(buffer)
-        await sock.sendMessage(jid, {
-          image: imgBuf,
-          caption: '✅ Stiker berhasil dikonversi!'
-        }, { quoted: msg })
+        // Animated sticker (ex-video) → try video first, always also send first frame image
+        let sent = false
+        try {
+          const vid = await stickerToVideo(buffer)
+          if (vid) {
+            await sock.sendMessage(jid, {
+              video: vid,
+              mimetype: 'video/mp4',
+              gifPlayback: true,
+              caption: '✅ Stiker animasi → video'
+            }, { quoted: msg })
+            sent = true
+          }
+        } catch (e) {
+          console.error('[TOIMG] video path:', e.message)
+        }
+
+        try {
+          const imgBuf = await stickerToImage(buffer)
+          await sock.sendMessage(jid, {
+            image: imgBuf,
+            caption: sent
+              ? '🖼️ Frame pertama (PNG)'
+              : '✅ Stiker berhasil dikonversi!'
+          }, { quoted: msg })
+          sent = true
+        } catch (e) {
+          if (!sent) throw e
+          console.error('[TOIMG] image path:', e.message)
+        }
+
         await react(sock, msg, '✅')
         break
       }
