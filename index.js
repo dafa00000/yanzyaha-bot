@@ -75,6 +75,9 @@ configHandler.loadUserConfigs()
 
 const PREFIX = '.'
 let isReconnecting = false
+// Module-level socket ref so SIGTERM/SIGINT handlers can actually close it,
+// and so a reconnect can end the previous socket instead of leaking it.
+let currentSock = null
 const OWNER = '62895618805248'
 const OWNER_LIDS = ['62895618805248', '83807763972304', '110857451221063']
 const logger = pino({ level: 'silent' })
@@ -108,15 +111,15 @@ process.on('unhandledRejection', (reason, promise) => {
 process.on('SIGTERM', () => {
   console.log('[SHUTDOWN] SIGTERM received — graceful exit')
   // Tutup socket dengan bersih kalau ada
-  if (typeof sock !== 'undefined' && sock?.end) {
-    try { sock.end() } catch {}
+  if (currentSock?.end) {
+    try { currentSock.end(undefined) } catch {}
   }
   setTimeout(() => process.exit(0), 1000)
 })
 process.on('SIGINT', () => {
   console.log('[SHUTDOWN] SIGINT received — graceful exit')
-  if (typeof sock !== 'undefined' && sock?.end) {
-    try { sock.end() } catch {}
+  if (currentSock?.end) {
+    try { currentSock.end(undefined) } catch {}
   }
   setTimeout(() => process.exit(0), 1000)
 })
@@ -129,6 +132,35 @@ async function startBot() {
     : './auth'
   // eslint-disable-next-line no-console
   console.log(`[auth] Using auth dir: ${authPath}`)
+
+  // ─── STALE SESSION GUARD ──────────────────────────────────────
+  // BUG yang bikin "pairing code ga muncul": kalau creds.json ada tapi
+  // registered:false (pairing sebelumnya ga pernah selesai / device di-unlink),
+  // server WA nolak handshake dengan 401 {"reason":"401","location":"cco"}.
+  // Socket langsung close SEBELUM requestPairingCode bisa jalan, jadi loop retry
+  // nembak socket mati terus-terusan dan kode pairing baru NEVER muncul.
+  // Fix: deteksi creds setengah-jadi dan buang biar mulai fresh.
+  try {
+    const credsFile = path.join(authPath, 'creds.json')
+    if (fs.existsSync(credsFile)) {
+      const raw = JSON.parse(fs.readFileSync(credsFile, 'utf8'))
+      const isHalfPaired = raw && raw.registered !== true && !raw.account
+      if (isHalfPaired) {
+        console.warn('⚠️  [auth] Session setengah-jadi terdeteksi (registered=false, no account).')
+        console.warn('   Server WA bakal nolak dengan 401 → kode pairing ga akan muncul.')
+        const stale = path.join(authPath, `_stale-${Date.now()}`)
+        fs.mkdirSync(stale, { recursive: true })
+        for (const f of fs.readdirSync(authPath)) {
+          if (f.startsWith('_stale-')) continue
+          try { fs.renameSync(path.join(authPath, f), path.join(stale, f)) } catch {}
+        }
+        console.warn(`   ↳ Session lama dipindah ke ${stale}. Mulai pairing fresh.\n`)
+      }
+    }
+  } catch (e) {
+    console.warn('[auth] Gagal cek creds lama:', e?.message)
+  }
+
   const { state, saveCreds } = await useMultiFileAuthState(authPath)
   const { version } = await fetchLatestBaileysVersion()
 
@@ -140,13 +172,27 @@ async function startBot() {
     },
     logger,
     printQRInTerminal: false,
-    browser: ['Ubuntu', 'Chrome', '20.0.04'],
-    connectTimeoutMs: 60000,
+    browser: ['Ubuntu', 'Chrome', '120.0.0'],
+    connectTimeoutMs: 120000,
     keepAliveIntervalMs: 30000,
-    markOnlineOnConnect: false,
+    markOnlineOnConnect: true,
+    defaultQueryTimeoutMs: 120000,
   })
+  currentSock = sock
 
   sock.ev.on('creds.update', saveCreds)
+
+  // Track socket liveness supaya retry pairing ga nembak socket mati.
+  let socketAlive = true
+  let lastCloseStatus = null
+  sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
+    if (connection === 'close') {
+      socketAlive = false
+      try { lastCloseStatus = new Boom(lastDisconnect?.error)?.output?.statusCode ?? null } catch { lastCloseStatus = null }
+    } else if (connection === 'open') {
+      socketAlive = true
+    }
+  })
 
   if (!sock.authState.creds.registered) {
     console.log('ENV PHONE:', process.env.PHONE_NUMBER)
@@ -174,22 +220,17 @@ async function startBot() {
 
     // ─── WAIT FOR SOCKET TO BE CONNECTED BEFORE REQUESTING PAIRING CODE ──
     // requestPairingCode akan throw error kalau socket belum connected/open.
-    // Ini penyebab utama gagal sign-in: kode di-call sebelum socket ready.
+    // Untuk pairing-code flow, Baileys ngasih event 'connecting' lalu QR;
+    // begitu QR muncul artinya handshake udah jadi dan requestPairingCode aman.
     const waitForConnection = () => new Promise((resolve) => {
       let resolved = false
-      const timeout = setTimeout(() => {
-        if (!resolved) { resolved = true; resolve('timeout') }
-      }, 30000)
-      sock.ev.on('connection.update', ({ connection }) => {
-        if (connection === 'open' && !resolved) {
-          resolved = true
-          clearTimeout(timeout)
-          resolve('open')
-        } else if (connection === 'close' && !resolved) {
-          resolved = true
-          clearTimeout(timeout)
-          resolve('closed')
-        }
+      const done = (v) => { if (!resolved) { resolved = true; clearTimeout(timeout); resolve(v) } }
+      const timeout = setTimeout(() => done('timeout'), 30000)
+      sock.ev.on('connection.update', ({ connection, qr }) => {
+        // qr present = handshake sukses, siap request pairing code
+        if (qr) return done('ready')
+        if (connection === 'open') return done('open')
+        if (connection === 'close') return done('closed')
       })
     })
 
@@ -198,60 +239,101 @@ async function startBot() {
 
     if (connResult === 'closed') {
       console.error('❌ Koneksi tertutup sebelum bisa request pairing code.')
-      console.error('   Cek internet / firewall. Bot akan reconnect otomatis.')
+      if (lastCloseStatus === 401) {
+        console.error('   Status 401 = session ditolak server WA.')
+        console.error('   Session lama akan dibuang otomatis di percobaan berikutnya.')
+      } else {
+        console.error('   Cek internet / firewall. Bot akan reconnect otomatis.')
+      }
+      return  // biar handler connection.update yang reconnect dengan socket FRESH
     } else if (connResult === 'timeout') {
       console.error('⚠️ Timeout menunggu koneksi (30s). Coba request pairing code anyway...')
     } else {
-      console.log('✅ Koneksi terbuka! Request pairing code...')
+      console.log('✅ Handshake OK! Request pairing code...')
     }
 
-    // ─── Retry logic with increasing backoff ──────────────────
-    const MAX_RETRIES = 3
-      let pairingCode = null
-      let attempt = 0
+    // ─── Bounded retry: retry di socket MATI itu sia-sia ─────────
+    // Kalau socket udah close, keluar dari loop dan biarkan reconnect
+    // handler bikin socket baru — di situ pairing di-request ulang.
+    const MAX_PAIR_ATTEMPTS = 3
+    let pairingCode = null
 
-      // Infinite retry loop for pairing code — keeps trying until success
-      while (true) {
-        attempt++
-        const delay = attempt === 1 ? 2000 : Math.min((attempt - 1) * 5000, 30000) // 2s, 5s, 10s, 15s... max 30s
-        console.log(`📋 Attempt ${attempt}: menunggu ${delay / 1000}s...`)
-        await new Promise(r => setTimeout(r, delay))
-
-        try {
-          pairingCode = await sock.requestPairingCode(nomor)
-          console.log(`\n╔══════════════════════════╗`)
-          console.log(`║  🔑 KODE PAIRING: ${pairingCode}  ║`)
-          console.log(`╚══════════════════════════╝`)
-          console.log('\n1. Buka WhatsApp')
-          console.log('2. Titik 3 → Perangkat Tertaut')
-          console.log('3. Tautkan dengan Nomor Telepon')
-          console.log('4. Masukkan kode di atas\n')
-          break  // success, exit retry loop
-        } catch (e) {
-          console.error(`❌ Attempt ${attempt} gagal: ${e?.message || e}`)
-          if (e?.stack) console.error('   Stack:', e.stack.split('\n').slice(0, 3).join('\n'))
-          console.log(`   ↳ Retry dalam 5 detik...\n`)
-          await new Promise(r => setTimeout(r, 5000))
-        }
+    for (let attempt = 1; attempt <= MAX_PAIR_ATTEMPTS; attempt++) {
+      if (!socketAlive) {
+        console.error('❌ Socket sudah tertutup — stop retry di socket mati.')
+        console.error('   Reconnect otomatis akan request pairing code lagi dengan socket baru.')
+        return
       }
+
+      const delay = attempt === 1 ? 2000 : 5000
+      console.log(`📋 Attempt ${attempt}/${MAX_PAIR_ATTEMPTS}: menunggu ${delay / 1000}s...`)
+      await new Promise(r => setTimeout(r, delay))
+
+      try {
+        pairingCode = await sock.requestPairingCode(nomor)
+        const pretty = String(pairingCode).replace(/(.{4})(?=.)/g, '$1-')
+        console.log('')
+        console.log('╔════════════════════════════════════╗')
+        console.log(`║   🔑 KODE PAIRING: ${pretty}   ║`)
+        console.log('╚════════════════════════════════════╝')
+        console.log('')
+        console.log('1. Buka WhatsApp di HP')
+        console.log('2. Titik 3 (⋮) → Perangkat Tertaut')
+        console.log('3. Tautkan dengan Nomor Telepon')
+        console.log(`4. Masukkan kode di atas — BERLAKU ~60 DETIK`)
+        console.log('')
+        break  // success
+      } catch (e) {
+        console.error(`❌ Attempt ${attempt} gagal: ${e?.message || e}`)
+        if (e?.stack) console.error('   Stack:', e.stack.split('\n').slice(0, 3).join('\n'))
+      }
+    }
+
+    if (!pairingCode) {
+      console.error('❌ Gagal dapat kode pairing setelah ' + MAX_PAIR_ATTEMPTS + ' percobaan.')
+      console.error('   Bot akan reconnect dan coba lagi dengan socket baru.')
+      return
+    }
   }
 
   sock.ev.on('connection.update', ({ connection, lastDisconnect }) => {
     if (connection === 'close') {
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode
       if (code === DisconnectReason.loggedOut) {
-        console.log('🚫 Logout! Hapus folder auth/ lalu jalankan ulang.')
-        process.exit(1)
-      } else if (!isReconnecting) {
+        // Jangan exit(1) — Railway/systemd bakal restart terus dan session
+        // rusak itu tetep ada. Buang session-nya lalu reconnect untuk pairing baru.
+        console.log('🚫 Logged out oleh WhatsApp — buang session, pairing ulang.')
+        try {
+          const ap = process.env.HERMES_HOME ? path.join(process.env.HERMES_HOME, 'auth') : './auth'
+          const stale = path.join(ap, `_loggedout-${Date.now()}`)
+          fs.mkdirSync(stale, { recursive: true })
+          for (const f of fs.readdirSync(ap)) {
+            if (f.startsWith('_stale-') || f.startsWith('_loggedout-')) continue
+            try { fs.renameSync(path.join(ap, f), path.join(stale, f)) } catch {}
+          }
+          console.log(`   ↳ Session dipindah ke ${stale}`)
+        } catch (e) {
+          console.error('   Gagal buang session:', e?.message)
+        }
+      }
+      if (!isReconnecting) {
         isReconnecting = true
-        console.log('🔄 Reconnect dalam 5 detik...')
+        // Tutup socket lama dulu biar ga numpuk & ga bocor listener/timer.
+        try { sock.end(undefined) } catch {}
+        console.log(`🔄 Reconnect dalam 5 detik... (close code=${code ?? 'n/a'})`)
         setTimeout(() => {
           isReconnecting = false
-          startBot()
+          startBot().catch(e => {
+            console.error('[FATAL] startBot gagal saat reconnect:', e?.message)
+            // Jangan exit — coba lagi nanti.
+            setTimeout(() => { if (!isReconnecting) startBot().catch(() => {}) }, 15000)
+          })
         }, 5000)
       }
     } else if (connection === 'open') {
-      console.clear()
+      // JANGAN console.clear() di sini — itu menghapus kode pairing dari layar/log
+      // sebelum user sempat baca. Ini salah satu alasan "kode pairing ga muncul".
+      console.log('')
       console.log('╔════════════════════════════════╗')
       console.log('║   ✅ BOT BERHASIL TERHUBUNG!   ║')
       console.log('╚════════════════════════════════╝')
@@ -1730,4 +1812,11 @@ case 'tomp3':
 }
 
 console.log('\n🚀 Memulai WA Bot...\n')
-startBot()
+// startBot() itu async — tanpa .catch(), error saat boot jadi unhandledRejection
+// dan bot diam tanpa retry. Ini bikin retry eksplisit.
+startBot().catch(e => {
+  console.error('[FATAL] startBot gagal saat boot:', e?.message)
+  if (e?.stack) console.error('  Stack:', e.stack.split('\n').slice(0, 5).join('\n'))
+  console.error('  ↳ Retry dalam 15 detik...')
+  setTimeout(() => { if (!isReconnecting) startBot().catch(() => {}) }, 15000)
+})
